@@ -174,7 +174,7 @@ export default function App() {
     <ThemeProvider>
       <div className="h-screen w-full font-sans antialiased bg-white dark:bg-gray-900 sepia:bg-sepia-50 text-gray-900 dark:text-gray-100 sepia:text-sepia-900 flex flex-col">
         {activeDoc ? (
-          <PdfViewer doc={activeDoc} onClose={() => setActiveDoc(null)} />
+          <PdfViewer doc={activeDoc} onClose={() => { setActiveDoc(null); setRefreshKey(prev => prev + 1); }} />
         ) : (
           <FileManager 
             key={refreshKey}
