@@ -15,12 +15,17 @@ import { PDFDocument } from 'pdf-lib';
 import { saveLocalDocument } from './lib/idb';
 import { App as CapApp } from '@capacitor/app';
 import { Filesystem } from '@capacitor/filesystem';
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 export default function App() {
   const [activeDoc, setActiveDoc] = useState<LocalDocument | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [isCompressing, setIsCompressing] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, u => setUser(u));
@@ -91,10 +96,46 @@ export default function App() {
     }
   };
 
-  const handleCompressPDF = async (doc: LocalDocument) => {
+  const handleCompressPDF = async (doc: LocalDocument, qualityPercent: number) => {
     try {
-      const pdfDoc = await PDFDocument.load(new Uint8Array(doc.data), { ignoreEncryption: true });
-      const savedBytes = await pdfDoc.save({ useObjectStreams: false }); 
+      setIsCompressing(true);
+      const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(doc.data) });
+      const loadedPdf = await loadingTask.promise;
+      
+      const newPdf = await PDFDocument.create();
+      
+      const scale = 1.0 + (qualityPercent / 100) * 1.5; 
+      const jpegQuality = 0.2 + (qualityPercent / 100) * 0.7;
+
+      for (let i = 1; i <= loadedPdf.numPages; i++) {
+        const page = await loadedPdf.getPage(i);
+        const viewport = page.getViewport({ scale });
+        
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) continue;
+        
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        await page.render({ canvasContext: ctx, viewport } as any).promise;
+        
+        const imgDataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
+        const img = await newPdf.embedJpg(imgDataUrl);
+        
+        const newPage = newPdf.addPage([viewport.width, viewport.height]);
+        newPage.drawImage(img, {
+          x: 0,
+          y: 0,
+          width: viewport.width,
+          height: viewport.height,
+        });
+      }
+      
+      const savedBytes = await newPdf.save({ useObjectStreams: false }); 
       
       const compressedDoc: LocalDocument = {
         ...doc,
@@ -112,7 +153,9 @@ export default function App() {
       alert(`Compressed version created: "${compressedDoc.name}" (${(compressedDoc.size / 1024 / 1024).toFixed(2)} MB)`);
     } catch (e) {
       console.error(e);
-      alert("Failed to compress PDF");
+      alert("Failed to compress PDF: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setIsCompressing(false);
     }
   };
 
@@ -139,6 +182,16 @@ export default function App() {
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
             Syncing documents...
+          </div>
+        )}
+        
+        {isCompressing && (
+          <div className="fixed bottom-4 left-4 bg-purple-600 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 animate-pulse z-50">
+            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Compressing PDF...
           </div>
         )}
       </div>

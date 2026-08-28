@@ -10,7 +10,7 @@ import { useTheme } from './ThemeContext';
 interface FileManagerProps {
   key?: React.Key;
   onOpenFile: (doc: LocalDocument) => void;
-  onCompressPDF: (doc: LocalDocument) => void;
+  onCompressPDF: (doc: LocalDocument, qualityPercent: number) => void;
   onSync: () => void;
   user: any;
   onLogin: () => void;
@@ -22,6 +22,8 @@ export function FileManager({ onOpenFile, onCompressPDF, onSync, user, onLogin }
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [activeMenuDoc, setActiveMenuDoc] = useState<LocalDocument | null>(null);
   const [tagModalDoc, setTagModalDoc] = useState<LocalDocument | null>(null);
+  const [compressModalDoc, setCompressModalDoc] = useState<LocalDocument | null>(null);
+  const [compressionLevel, setCompressionLevel] = useState<number>(50);
   const [newTagInput, setNewTagInput] = useState('');
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
@@ -434,7 +436,7 @@ export function FileManager({ onOpenFile, onCompressPDF, onSync, user, onLogin }
                 onClick={() => {
                   const doc = activeMenuDoc;
                   setActiveMenuDoc(null);
-                  onCompressPDF(doc);
+                  setCompressModalDoc(doc);
                 }}
                 className="w-full flex items-center gap-3 px-3 py-3.5 rounded-2xl text-left font-medium text-sm hover:bg-gray-50 dark:hover:bg-gray-800 sepia:hover:bg-sepia-100 active:bg-gray-100 dark:active:bg-gray-700 transition-colors text-gray-900 dark:text-gray-100"
               >
@@ -565,6 +567,61 @@ export function FileManager({ onOpenFile, onCompressPDF, onSync, user, onLogin }
               className="w-full py-3 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 rounded-xl font-semibold text-sm transition-colors"
             >
               Done
+            </button>
+          </div>
+        </div>
+      )}
+      {/* Compression Modal */}
+      {compressModalDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-gray-900 sepia:bg-sepia-50 rounded-3xl p-6 shadow-2xl border border-gray-100 dark:border-gray-800 sepia:border-sepia-200 w-full max-w-sm">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-bold text-lg">Compress PDF</h3>
+              <button 
+                onClick={() => setCompressModalDoc(null)} 
+                className="p-1.5 text-gray-400 hover:text-gray-700 rounded-full"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <p className="text-xs text-gray-500 mb-6 truncate font-medium">
+              {compressModalDoc.name} ({formatFileSize(compressModalDoc.size)})
+            </p>
+
+            <div className="space-y-4 mb-8">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-semibold flex justify-between">
+                  <span>Compression Level</span>
+                  <span className="text-blue-600">{compressionLevel}% Quality</span>
+                </label>
+                <input 
+                  type="range" 
+                  min="10" 
+                  max="100" 
+                  step="10"
+                  value={compressionLevel} 
+                  onChange={(e) => setCompressionLevel(Number(e.target.value))}
+                  className="w-full accent-blue-600 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                />
+              </div>
+              
+              <div className="flex justify-between text-xs text-gray-500 font-medium px-1">
+                <span>Low Size</span>
+                <span>Balanced</span>
+                <span>High Quality</span>
+              </div>
+            </div>
+
+            <button 
+              onClick={() => {
+                const doc = compressModalDoc;
+                setCompressModalDoc(null);
+                onCompressPDF(doc, compressionLevel);
+              }}
+              className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-bold text-sm shadow-md shadow-blue-500/20 transition-all active:scale-95"
+            >
+              Start Compression
             </button>
           </div>
         </div>

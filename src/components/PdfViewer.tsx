@@ -339,6 +339,8 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
     setCurrentPath([]);
   };
 
+  const lastTapRef = useRef<{ time: number, x: number, y: number } | null>(null);
+
   // 6. Touch Gestures (Pinch to Zoom & Double Tap)
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 2) {
@@ -360,8 +362,48 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
     }
   };
 
-  const handleTouchEnd = () => {
+  const handleTouchEnd = (e: React.TouchEvent) => {
     touchDistanceRef.current = null;
+    
+    // Detect double tap
+    if (e.changedTouches.length === 1) {
+      const touch = e.changedTouches[0];
+      const now = Date.now();
+      const last = lastTapRef.current;
+      
+      if (last && now - last.time < 300) {
+        // Double tap!
+        const dx = touch.clientX - last.x;
+        const dy = touch.clientY - last.y;
+        if (Math.hypot(dx, dy) < 30) {
+          const container = containerRef.current;
+          if (container) {
+            if (userZoom > 1.1) {
+               setUserZoom(1.0);
+            } else {
+               const rect = container.getBoundingClientRect();
+               // Tap position relative to container's top-left
+               const tapX = touch.clientX - rect.left + container.scrollLeft;
+               const tapY = touch.clientY - rect.top + container.scrollTop;
+               
+               const targetZoom = 1.5;
+               const zoomRatio = targetZoom / userZoom;
+               
+               setUserZoom(targetZoom);
+               
+               setTimeout(() => {
+                 container.scrollLeft = tapX * zoomRatio - (rect.width / 2);
+                 container.scrollTop = tapY * zoomRatio - (rect.height / 2);
+               }, 10);
+            }
+          }
+          lastTapRef.current = null;
+          return;
+        }
+      }
+      
+      lastTapRef.current = { time: now, x: touch.clientX, y: touch.clientY };
+    }
   };
 
   // 7. Save Annotations to Local IndexedDB & PDF Bytes
@@ -411,7 +453,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         }
       }
 
-      const savedBytes = await pdfDoc.save();
+      const savedBytes = await pdfDoc.save({ useObjectStreams: false });
 
       const updatedDocument: LocalDocument = {
         ...doc,
@@ -432,7 +474,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
       setPdf(loadedPdf);
     } catch (e) {
       console.error('Error saving PDF:', e);
-      showToast("Error saving annotations.");
+      showToast("Error saving annotations: " + (e instanceof Error ? e.message : String(e)));
     } finally {
       setIsSaving(false);
     }
