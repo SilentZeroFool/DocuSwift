@@ -78,7 +78,10 @@ export default function App() {
 
   const handleLogin = async () => {
     try {
-      await googleSignIn();
+      const res = await googleSignIn();
+      if (res) {
+        setUser(res.user);
+      }
     } catch (e) {
       console.error(e);
       alert("Login failed");
@@ -106,8 +109,9 @@ export default function App() {
       
       const newPdf = await PDFDocument.create();
       
-      const scale = 1.0 + (qualityPercent / 100) * 1.5; 
-      const jpegQuality = 0.2 + (qualityPercent / 100) * 0.7;
+      // Lower scaling to ensure compressed files are smaller
+      const scale = 0.5 + (qualityPercent / 100) * 1.0; 
+      const jpegQuality = 0.1 + (qualityPercent / 100) * 0.7;
 
       for (let i = 1; i <= loadedPdf.numPages; i++) {
         const page = await loadedPdf.getPage(i);
@@ -138,6 +142,11 @@ export default function App() {
       }
       
       const savedBytes = await newPdf.save({ useObjectStreams: false }); 
+      
+      if (savedBytes.length >= doc.size) {
+        alert("Compression stopped: The original PDF is highly optimized text. Converting it to compressed images increases the file size. Kept original.");
+        return;
+      }
       
       const compressedDoc: LocalDocument = {
         ...doc,

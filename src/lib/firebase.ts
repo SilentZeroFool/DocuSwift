@@ -1,14 +1,18 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signInWithCredential, onAuthStateChanged, User } from 'firebase/auth';
+import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Capacitor } from '@capacitor/core';
-import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/drive.file');
+// Adding prompt: consent forces a refresh token, ensuring we get a new access token
+provider.setCustomParameters({
+  prompt: 'consent',
+  access_type: 'offline'
+});
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
@@ -17,24 +21,39 @@ export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
-  // Check redirect result for web fallback
+  // We need to wait for getRedirectResult first before letting onAuthStateChanged decide
+  let redirectCheckDone = false;
+  
   getRedirectResult(auth).then((result) => {
+    redirectCheckDone = true;
     if (result) {
       const credential = GoogleAuthProvider.credentialFromResult(result);
       if (credential?.accessToken) {
         cachedAccessToken = credential.accessToken;
+        if (onAuthSuccess) onAuthSuccess(result.user, cachedAccessToken);
       }
+    } else {
+      // If we are already signed in from a previous session, we might not have a token
+      // but let's re-evaluate auth state if needed.
     }
-  }).catch(console.error);
+  }).catch((e) => {
+    redirectCheckDone = true;
+    console.error(e);
+  });
 
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
+      // If we have token, success immediately
       if (cachedAccessToken) {
         if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
       } else if (!isSigningIn) {
-        // We have a user but no access token (e.g., page refresh)
-        cachedAccessToken = null;
-        if (onAuthFailure) onAuthFailure();
+        // We have a user but no access token (e.g. they refreshed)
+        // Let's wait a moment just in case getRedirectResult is in flight
+        setTimeout(() => {
+          if (!cachedAccessToken) {
+            if (onAuthFailure) onAuthFailure();
+          }
+        }, 1500);
       }
     } else {
       cachedAccessToken = null;
@@ -47,18 +66,9 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   try {
     isSigningIn = true;
     if (Capacitor.isNativePlatform()) {
-      const result = await FirebaseAuthentication.signInWithGoogle({
-        scopes: ['https://www.googleapis.com/auth/drive.file']
-      });
-      
-      const credential = GoogleAuthProvider.credential(result.credential?.idToken, result.credential?.accessToken);
-      const authResult = await signInWithCredential(auth, credential);
-      
-      cachedAccessToken = result.credential?.accessToken || null;
-      if (!cachedAccessToken) {
-        throw new Error('Failed to get access token');
-      }
-      return { user: authResult.user, accessToken: cachedAccessToken };
+      // In Android Capacitor, popups are blocked. Use redirect.
+      await signInWithRedirect(auth, provider);
+      return null; // Page will reload
     } else {
       const result = await signInWithPopup(auth, provider);
       const credential = GoogleAuthProvider.credentialFromResult(result);
@@ -81,9 +91,6 @@ export const getAccessToken = async (): Promise<string | null> => {
 };
 
 export const logout = async () => {
-  if (Capacitor.isNativePlatform()) {
-    await FirebaseAuthentication.signOut();
-  }
   await auth.signOut();
   cachedAccessToken = null;
 };

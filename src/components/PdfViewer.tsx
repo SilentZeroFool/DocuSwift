@@ -47,6 +47,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   
   // Zoom & Scale
   const [userZoom, setUserZoom] = useState(1.0); // CSS scale (instant)
+  const [isPinching, setIsPinching] = useState(false);
   const renderZoom = 2.0; // Fixed high-res PDF rendering scale
   const [fitScale, setFitScale] = useState(1.0);
   const [isPageChanging, setIsPageChanging] = useState(false);
@@ -81,7 +82,14 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
     let isCancelled = false;
     const loadPDF = async () => {
       try {
-        const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(currentPdfDataRef.current.slice(0)) });
+        const buf = currentPdfDataRef.current;
+        let arrayBuffer: ArrayBuffer;
+        if (buf instanceof ArrayBuffer) {
+          arrayBuffer = buf.slice(0);
+        } else {
+          arrayBuffer = new Uint8Array(buf as any).buffer;
+        }
+        const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
         const loadedPdf = await loadingTask.promise;
         if (isCancelled) return;
         setPdf(loadedPdf);
@@ -346,6 +354,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   // 6. Touch Gestures (Pinch to Zoom & Double Tap)
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 2) {
+      setIsPinching(true);
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       touchDistanceRef.current = Math.hypot(dx, dy);
@@ -390,6 +399,9 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
+    if (e.touches.length < 2) {
+      setIsPinching(false);
+    }
     touchDistanceRef.current = null;
     
     // Detect double tap
@@ -452,7 +464,16 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
     setIsSaving(true);
     try {
-      const pdfDoc = await PDFDocument.load(new Uint8Array(currentPdfDataRef.current.slice(0)), { ignoreEncryption: true });
+      // Force it to an ArrayBuffer safely
+      const buf = currentPdfDataRef.current;
+      let arrayBuffer: ArrayBuffer;
+      if (buf instanceof ArrayBuffer) {
+        arrayBuffer = buf.slice(0);
+      } else {
+        // Fallback if it somehow became a typed array or buffer
+        arrayBuffer = new Uint8Array(buf as any).buffer;
+      }
+      const pdfDoc = await PDFDocument.load(new Uint8Array(arrayBuffer), { ignoreEncryption: true });
 
       for (const ann of annotations) {
         if (ann.page > pdfDoc.getPageCount()) continue;
@@ -779,7 +800,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
               width: pageSize.width * fitScale * renderZoom,
               height: pageSize.height * fitScale * renderZoom,
               transform: `scale(${userZoom / renderZoom})`,
-              // The browser handles scale instantly for smooth pinch-to-zoom
+              transition: isPinching ? 'none' : 'transform 0.2s ease-out'
             }}
           >
             {/* Background PDF Canvas */}
