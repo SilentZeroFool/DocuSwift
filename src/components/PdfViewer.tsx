@@ -424,27 +424,36 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
             const contentX = tapX + container.scrollLeft;
             const contentY = tapY + container.scrollTop;
 
-            if (userZoom > 1.1) {
-               const targetZoom = 1.0;
-               const zoomRatio = targetZoom / userZoom;
-               
-               flushSync(() => {
-                 setUserZoom(targetZoom);
-               });
-               
-               container.scrollLeft = contentX * zoomRatio - tapX;
-               container.scrollTop = contentY * zoomRatio - tapY;
-            } else {
-               const targetZoom = 1.5;
-               const zoomRatio = targetZoom / userZoom;
-               
-               flushSync(() => {
-                 setUserZoom(targetZoom);
-               });
-               
-               container.scrollLeft = contentX * zoomRatio - tapX;
-               container.scrollTop = contentY * zoomRatio - tapY;
-            }
+            const targetZoom = userZoom > 1.1 ? 1.0 : 1.5;
+            const startZoom = userZoom;
+            const startScrollLeft = container.scrollLeft;
+            const startScrollTop = container.scrollTop;
+            
+            const targetScrollLeft = contentX * (targetZoom / startZoom) - tapX;
+            const targetScrollTop = contentY * (targetZoom / startZoom) - tapY;
+            
+            setIsPinching(true); // Disable CSS transition
+            
+            const startTime = performance.now();
+            const duration = 200;
+            
+            const animate = (time) => {
+              let progress = (time - startTime) / duration;
+              if (progress > 1) progress = 1;
+              const ease = 1 - Math.pow(1 - progress, 3);
+              
+              const currentZoom = startZoom + (targetZoom - startZoom) * ease;
+              setUserZoom(currentZoom);
+              container.scrollLeft = startScrollLeft + (targetScrollLeft - startScrollLeft) * ease;
+              container.scrollTop = startScrollTop + (targetScrollTop - startScrollTop) * ease;
+              
+              if (progress < 1) {
+                requestAnimationFrame(animate);
+              } else {
+                setIsPinching(false);
+              }
+            };
+            requestAnimationFrame(animate);
           }
           lastTapRef.current = null;
           return;
@@ -477,6 +486,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
       for (const ann of annotations) {
         if (ann.page > pdfDoc.getPageCount()) continue;
+        if (ann.points.length < 2) continue; // Skip single-point dots to prevent pdf-lib crash
         const page = pdfDoc.getPage(ann.page - 1);
         const { width: pWidth, height: pHeight } = page.getSize();
 
@@ -506,7 +516,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         page.drawSvgPath(pathData, {
           borderColor: rgb(r, g, b),
           borderWidth: ann.type === 'highlight' ? Math.max(12, ann.strokeWidth) : Math.max(1.5, ann.strokeWidth),
-          borderLineCap: LineCapStyle.Round,
+          color: undefined, // Crucial: prevents filling the path with black
           opacity: alpha,
         });
       }
@@ -650,7 +660,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
       </header>
 
       {/* Floating Action / Tool Selector Bar (Optimized for Mobile Touch) */}
-      <div className="px-3 pt-2 pb-1.5 flex items-center justify-between gap-2 shrink-0 z-20 overflow-x-auto no-scrollbar">
+      <div className="px-3 pt-2 pb-1.5 flex flex-wrap items-center justify-between gap-2 shrink-0 z-20">
         {/* Tool Segmented Control */}
         <div className="flex items-center bg-white dark:bg-gray-800 sepia:bg-sepia-50 p-1 rounded-2xl shadow-xs border border-gray-200 dark:border-gray-700 sepia:border-sepia-200">
           <button 
@@ -800,7 +810,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
               width: pageSize.width * fitScale * renderZoom,
               height: pageSize.height * fitScale * renderZoom,
               transform: `scale(${userZoom / renderZoom})`,
-              transition: isPinching ? 'none' : 'transform 0.2s ease-out'
+              transition: 'none'
             }}
           >
             {/* Background PDF Canvas */}
