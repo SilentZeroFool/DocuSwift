@@ -7,7 +7,7 @@ import {
   Eraser, Hand, Maximize2, Palette, RotateCcw, Check, ChevronLeft, ChevronRight, X, Layers
 } from 'lucide-react';
 import { LocalDocument } from '../types';
-import { PDFDocument, rgb } from 'pdf-lib';
+import { PDFDocument, rgb, LineCapStyle } from 'pdf-lib';
 import { saveLocalDocument } from '../lib/idb';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -359,12 +359,37 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
   const handleTouchMove = (e: React.TouchEvent) => {
     if (e.touches.length === 2 && touchDistanceRef.current !== null) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const touch1 = e.touches[0];
+      const touch2 = e.touches[1];
+      const dx = touch1.clientX - touch2.clientX;
+      const dy = touch1.clientY - touch2.clientY;
       const dist = Math.hypot(dx, dy);
       const ratio = dist / touchDistanceRef.current;
-      const nextZoom = Math.min(Math.max(0.6, touchStartZoomRef.current * ratio), 3.5);
-      setUserZoom(nextZoom);
+      
+      const nextZoom = Math.min(Math.max(0.6, userZoom * ratio), 4.0);
+      
+      const container = containerRef.current;
+      if (container && nextZoom !== userZoom) {
+        const rect = container.getBoundingClientRect();
+        const pinchCenterX = (touch1.clientX + touch2.clientX) / 2 - rect.left;
+        const pinchCenterY = (touch1.clientY + touch2.clientY) / 2 - rect.top;
+
+        const contentX = pinchCenterX + container.scrollLeft;
+        const contentY = pinchCenterY + container.scrollTop;
+
+        const zoomRatio = nextZoom / userZoom;
+        
+        flushSync(() => {
+          setUserZoom(nextZoom);
+        });
+
+        container.scrollLeft = contentX * zoomRatio - pinchCenterX;
+        container.scrollTop = contentY * zoomRatio - pinchCenterY;
+      } else {
+        setUserZoom(nextZoom);
+      }
+      
+      touchDistanceRef.current = dist;
     }
   };
 
@@ -385,8 +410,11 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
           const container = containerRef.current;
           if (container) {
             const rect = container.getBoundingClientRect();
-            const tapX = touch.clientX - rect.left + container.scrollLeft;
-            const tapY = touch.clientY - rect.top + container.scrollTop;
+            const tapX = touch.clientX - rect.left;
+            const tapY = touch.clientY - rect.top;
+            
+            const contentX = tapX + container.scrollLeft;
+            const contentY = tapY + container.scrollTop;
 
             if (userZoom > 1.1) {
                const targetZoom = 1.0;
@@ -396,8 +424,8 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
                  setUserZoom(targetZoom);
                });
                
-               container.scrollLeft = tapX * zoomRatio - (rect.width / 2);
-               container.scrollTop = tapY * zoomRatio - (rect.height / 2);
+               container.scrollLeft = contentX * zoomRatio - tapX;
+               container.scrollTop = contentY * zoomRatio - tapY;
             } else {
                const targetZoom = 1.5;
                const zoomRatio = targetZoom / userZoom;
@@ -406,8 +434,8 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
                  setUserZoom(targetZoom);
                });
                
-               container.scrollLeft = tapX * zoomRatio - (rect.width / 2);
-               container.scrollTop = tapY * zoomRatio - (rect.height / 2);
+               container.scrollLeft = contentX * zoomRatio - tapX;
+               container.scrollTop = contentY * zoomRatio - tapY;
             }
           }
           lastTapRef.current = null;
@@ -452,18 +480,18 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
           else { r = 0.1; g = 0.1; b = 0.1; }
         }
 
-        for (let i = 1; i < ann.points.length; i++) {
-          const p1 = ann.points[i - 1];
-          const p2 = ann.points[i];
-          // In PDF, Y=0 is at bottom
-          page.drawLine({
-            start: { x: p1.x * pWidth, y: (1 - p1.y) * pHeight },
-            end: { x: p2.x * pWidth, y: (1 - p2.y) * pHeight },
-            thickness: ann.type === 'highlight' ? Math.max(12, ann.strokeWidth) : Math.max(1.5, ann.strokeWidth),
-            color: rgb(r, g, b),
-            opacity: alpha,
-          });
-        }
+        if (ann.points.length < 2) continue;
+        
+        const pathData = ann.points.map((p, i) => 
+          `${i === 0 ? 'M' : 'L'} ${p.x * pWidth} ${(1 - p.y) * pHeight}`
+        ).join(' ');
+
+        page.drawSvgPath(pathData, {
+          borderColor: rgb(r, g, b),
+          borderWidth: ann.type === 'highlight' ? Math.max(12, ann.strokeWidth) : Math.max(1.5, ann.strokeWidth),
+          borderLineCap: LineCapStyle.Round,
+          opacity: alpha,
+        });
       }
 
       const savedBytes = await pdfDoc.save({ useObjectStreams: false });
@@ -708,20 +736,19 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
       {/* Main PDF Scrollable Stage */}
       <div 
         ref={containerRef}
-        className="flex-1 overflow-auto relative touch-pan-x touch-pan-y flex"
+        className="flex-1 overflow-auto relative touch-pan-x touch-pan-y"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
-        <div className="m-auto p-4" style={{ 
-          minWidth: `${(pageSize.width * fitScale * userZoom) + 32}px`,
-          minHeight: `${(pageSize.height * fitScale * userZoom) + 32}px`,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center'
+        <div className="p-4" style={{ 
+          width: `${(pageSize.width * fitScale * userZoom) + 32}px`,
+          height: `${(pageSize.height * fitScale * userZoom) + 32}px`,
+          margin: '0 auto',
+          position: 'relative'
         }}>
           <div 
-            className="relative shadow-xl rounded-md overflow-hidden bg-white shrink-0 origin-center"
+            className="relative shadow-xl rounded-md overflow-hidden bg-white origin-top-left"
             style={{
               width: pageSize.width * fitScale * renderZoom,
               height: pageSize.height * fitScale * renderZoom,

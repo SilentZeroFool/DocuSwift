@@ -8,8 +8,8 @@ import { FileManager } from './components/FileManager';
 import { PdfViewer } from './components/PdfViewer';
 import { ThemeProvider } from './components/ThemeContext';
 import { LocalDocument } from './types';
-import { auth } from './lib/firebase';
-import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
+import { initAuth, googleSignIn, logout } from './lib/firebase';
+import { User } from 'firebase/auth';
 import { syncDocuments } from './lib/sync';
 import { PDFDocument } from 'pdf-lib';
 import { saveLocalDocument } from './lib/idb';
@@ -28,8 +28,11 @@ export default function App() {
   const [isCompressing, setIsCompressing] = useState(false);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, u => setUser(u));
-
+    const unsub = initAuth(
+      (u) => setUser(u),
+      () => setUser(null)
+    );
+    
     const initIntentHandler = async () => {
       try {
         await CapApp.addListener('appUrlOpen', async (data) => {
@@ -75,8 +78,7 @@ export default function App() {
 
   const handleLogin = async () => {
     try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      await googleSignIn();
     } catch (e) {
       console.error(e);
       alert("Login failed");

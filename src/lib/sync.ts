@@ -1,62 +1,106 @@
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { doc, getDocs, collection, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db, storage, auth } from './firebase';
+import { getAccessToken } from './firebase';
 import { getLocalDocuments, saveLocalDocument } from './idb';
 import { LocalDocument } from '../types';
 
-export async function syncDocuments() {
-  if (!auth.currentUser) return;
-  const uid = auth.currentUser.uid;
+async function getAppFolder(token: string): Promise<string> {
+  const query = "name='DocuSwift' and mimeType='application/vnd.google-apps.folder' and trashed=false";
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  const data = await res.json();
+  if (data.files && data.files.length > 0) {
+    return data.files[0].id;
+  }
   
+  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      name: 'DocuSwift',
+      mimeType: 'application/vnd.google-apps.folder'
+    })
+  });
+  const createData = await createRes.json();
+  return createData.id;
+}
+
+export async function syncDocuments() {
+  const token = await getAccessToken();
+  if (!token) return;
+
+  const folderId = await getAppFolder(token);
   const localDocs = await getLocalDocuments();
+  
   const docsToUpload = localDocs.filter(d => !d.isBackedUp);
   
-  // Upload local changes
   for (const localDoc of docsToUpload) {
     try {
-      const storageRef = ref(storage, `users/${uid}/${localDoc.id}.pdf`);
-      await uploadBytes(storageRef, localDoc.data);
-      const url = await getDownloadURL(storageRef);
-      
-      const docRef = doc(db, 'users', uid, 'documents', localDoc.id);
-      await setDoc(docRef, {
-        id: localDoc.id,
-        userId: uid,
+      const metadata = {
         name: localDoc.name,
-        size: localDoc.size,
-        createdAt: localDoc.createdAt,
-        updatedAt: localDoc.updatedAt,
-        tags: localDoc.tags,
-        isBackedUp: true,
-        cloudPath: url
-      });
+        parents: [folderId],
+        appProperties: {
+          appletId: localDoc.id,
+          tags: JSON.stringify(localDoc.tags),
+          createdAt: localDoc.createdAt.toString(),
+          updatedAt: localDoc.updatedAt.toString()
+        }
+      };
+
+      const formData = new FormData();
+      formData.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+      formData.append('file', new Blob([localDoc.data], { type: 'application/pdf' }));
+
+      let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+      let method = 'POST';
       
-      await saveLocalDocument({ ...localDoc, isBackedUp: true, cloudPath: url });
+      if (localDoc.cloudPath) {
+        url = `https://www.googleapis.com/upload/drive/v3/files/${localDoc.cloudPath}?uploadType=multipart`;
+        method = 'PATCH';
+      }
+
+      const res = await fetch(url, {
+        method,
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData
+      });
+      const data = await res.json();
+      
+      await saveLocalDocument({ ...localDoc, isBackedUp: true, cloudPath: data.id });
     } catch (e) {
       console.error('Failed to sync doc up', e);
     }
   }
-  
-  // Download missing docs from cloud
+
   try {
-    const snap = await getDocs(collection(db, 'users', uid, 'documents'));
-    const cloudDocs = snap.docs.map(d => d.data());
+    const query = `'${folderId}' in parents and trashed=false`;
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,size,appProperties)&pageSize=100`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const data = await res.json();
+    const cloudDocs = data.files || [];
     const localIds = new Set(localDocs.map(d => d.id));
     
     for (const cDoc of cloudDocs) {
-      if (!localIds.has(cDoc.id) && cDoc.cloudPath) {
+      const appletId = cDoc.appProperties?.appletId;
+      if (appletId && !localIds.has(appletId)) {
         try {
-          const res = await fetch(cDoc.cloudPath);
-          const buffer = await res.arrayBuffer();
+          const dlRes = await fetch(`https://www.googleapis.com/drive/v3/files/${cDoc.id}?alt=media`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const buffer = await dlRes.arrayBuffer();
+          
           await saveLocalDocument({
-            id: cDoc.id,
+            id: appletId,
             name: cDoc.name,
-            size: cDoc.size,
-            createdAt: cDoc.createdAt,
-            updatedAt: cDoc.updatedAt,
-            tags: cDoc.tags || [],
+            size: Number(cDoc.size || buffer.byteLength),
+            createdAt: Number(cDoc.appProperties?.createdAt || Date.now()),
+            updatedAt: Number(cDoc.appProperties?.updatedAt || Date.now()),
+            tags: JSON.parse(cDoc.appProperties?.tags || '[]'),
             isBackedUp: true,
-            cloudPath: cDoc.cloudPath,
+            cloudPath: cDoc.id,
             data: buffer
           });
         } catch (e) {
