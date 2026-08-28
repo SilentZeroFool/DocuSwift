@@ -7,6 +7,7 @@ import React, { useEffect, useState } from 'react';
 import { FileManager } from './components/FileManager';
 import { PdfViewer } from './components/PdfViewer';
 import { ThemeProvider } from './components/ThemeContext';
+import { SettingsProvider } from './components/SettingsContext';
 import { LocalDocument } from './types';
 import { initAuth, googleSignIn, logout } from './lib/firebase';
 import { User } from 'firebase/auth';
@@ -172,6 +173,7 @@ export default function App() {
 
   return (
     <ThemeProvider>
+    <SettingsProvider>
       <div className="h-screen w-full font-sans antialiased bg-white dark:bg-gray-900 sepia:bg-sepia-50 text-gray-900 dark:text-gray-100 sepia:text-sepia-900 flex flex-col">
         {activeDoc ? (
           <PdfViewer doc={activeDoc} onClose={() => { setActiveDoc(null); setRefreshKey(prev => prev + 1); }} />
@@ -206,6 +208,7 @@ export default function App() {
           </div>
         )}
       </div>
+        </SettingsProvider>
     </ThemeProvider>
   );
 }

@@ -1,14 +1,13 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
+import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, User, signOut } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Capacitor } from '@capacitor/core';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-
 const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/drive.file');
-// Adding prompt: consent forces a refresh token, ensuring we get a new access token
+
 provider.setCustomParameters({
   prompt: 'consent',
   access_type: 'offline'
@@ -21,15 +20,37 @@ export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  let redirectCheckDone = false;
+  
+  if (Capacitor.isNativePlatform()) {
+    getRedirectResult(auth).then((result) => {
+      redirectCheckDone = true;
+      if (result) {
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) {
+          cachedAccessToken = credential.accessToken;
+          if (onAuthSuccess) onAuthSuccess(result.user, cachedAccessToken);
+        }
+      }
+    }).catch((e) => {
+      redirectCheckDone = true;
+      console.error("Redirect result error:", e);
+    });
+  } else {
+    redirectCheckDone = true;
+  }
+
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
       if (cachedAccessToken) {
         if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
       } else if (!isSigningIn) {
-        // If there's a user but no access token in memory, we can't sync to Drive.
-        // We must prompt them to log in again to get a fresh token.
-        cachedAccessToken = null;
-        if (onAuthFailure) onAuthFailure();
+        // Wait a bit for redirect check to finish on mobile
+        setTimeout(() => {
+          if (!cachedAccessToken && onAuthFailure) {
+            onAuthFailure();
+          }
+        }, Capacitor.isNativePlatform() ? 2000 : 500);
       }
     } else {
       cachedAccessToken = null;
@@ -41,7 +62,10 @@ export const initAuth = (
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
   try {
     isSigningIn = true;
-      // Using signInWithPopup for all platforms in this environment
+    if (Capacitor.isNativePlatform()) {
+      await signInWithRedirect(auth, provider);
+      return null;
+    } else {
       const result = await signInWithPopup(auth, provider);
       const credential = GoogleAuthProvider.credentialFromResult(result);
       if (!credential?.accessToken) {
@@ -49,6 +73,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
       }
       cachedAccessToken = credential.accessToken;
       return { user: result.user, accessToken: cachedAccessToken };
+    }
   } catch (error: any) {
     console.error('Sign in error:', error);
     throw error;
@@ -62,6 +87,6 @@ export const getAccessToken = async (): Promise<string | null> => {
 };
 
 export const logout = async () => {
-  await auth.signOut();
+  await signOut(auth);
   cachedAccessToken = null;
 };

@@ -7,6 +7,7 @@ import {
   Eraser, Hand, Maximize2, Palette, RotateCcw, Check, ChevronLeft, ChevronRight, X, Layers
 } from 'lucide-react';
 import { LocalDocument } from '../types';
+import { useSettings } from './SettingsContext';
 import { PDFDocument, rgb, LineCapStyle } from 'pdf-lib';
 import { saveLocalDocument } from '../lib/idb';
 import { Capacitor } from '@capacitor/core';
@@ -46,6 +47,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   const [pageSize, setPageSize] = useState<{ width: number; height: number }>({ width: 595, height: 842 });
   
   // Zoom & Scale
+  const { settings } = useSettings();
   const [userZoom, setUserZoom] = useState(1.0); // CSS scale (instant)
   const [isPinching, setIsPinching] = useState(false);
   const renderZoom = 2.0; // Fixed high-res PDF rendering scale
@@ -435,7 +437,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
             setIsPinching(true); // Disable CSS transition
             
             const startTime = performance.now();
-            const duration = 200;
+            const duration = settings.animationDuration;
             
             const animate = (time) => {
               let progress = (time - startTime) / duration;
@@ -544,6 +546,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
       setPdf(loadedPdf);
     } catch (e) {
       console.error('Error saving PDF:', e);
+      alert("Error saving annotations: " + (e instanceof Error ? e.message : String(e)));
       showToast("Error saving annotations: " + (e instanceof Error ? e.message : String(e)));
     } finally {
       setIsSaving(false);

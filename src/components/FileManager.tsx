@@ -1,11 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   Search, Upload, File as FileIcon, Tag, MoreVertical, Trash2, Cloud, CloudOff, 
-  Sun, Moon, Coffee, Laptop, X, FileText, Minimize2, Download, Eye, Plus, Check, Share2
+  Sun, Moon, Coffee, Laptop, X, FileText, Minimize2, Download, Eye, Plus, Check, Share2,
+  Menu, Settings as SettingsIcon, LogOut
 } from 'lucide-react';
 import { getLocalDocuments, saveLocalDocument, deleteLocalDocument } from '../lib/idb';
 import { LocalDocument } from '../types';
 import { useTheme } from './ThemeContext';
+import { useSettings } from './SettingsContext';
+import { logout } from '../lib/firebase';
 
 interface FileManagerProps {
   key?: React.Key;
@@ -17,6 +20,9 @@ interface FileManagerProps {
 }
 
 export function FileManager({ onOpenFile, onCompressPDF, onSync, user, onLogin }: FileManagerProps) {
+  const { settings, updateSetting, resetSettings } = useSettings();
+  const [isBurgerMenuOpen, setIsBurgerMenuOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [documents, setDocuments] = useState<LocalDocument[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -146,6 +152,88 @@ export function FileManager({ onOpenFile, onCompressPDF, onSync, user, onLogin }
 
   return (
     <div className="flex flex-col h-full overflow-hidden select-none">
+
+      {/* Settings Modal */}
+      {isSettingsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-800 sepia:bg-sepia-50 w-full max-w-sm rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+              <h2 className="text-lg font-bold">Advanced Settings</h2>
+              <button 
+                onClick={() => setIsSettingsModalOpen(false)}
+                className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            
+            <div className="p-4 space-y-5">
+              
+              <div>
+                <label className="flex items-center justify-between text-sm font-semibold mb-2">
+                  <span>Zoom Sensitivity</span>
+                  <span className="text-blue-600 font-mono text-xs">{settings.zoomSensitivity.toFixed(2)}x</span>
+                </label>
+                <p className="text-xs text-gray-500 mb-2">Adjusts how fast the document scales when you pinch to zoom.</p>
+                <input 
+                  type="range" 
+                  min="0.1" 
+                  max="3.0" 
+                  step="0.1" 
+                  value={settings.zoomSensitivity}
+                  onChange={(e) => updateSetting('zoomSensitivity', parseFloat(e.target.value))}
+                  className="w-full accent-blue-600"
+                />
+              </div>
+
+              <div>
+                <label className="flex items-center justify-between text-sm font-semibold mb-2">
+                  <span>Double Tap Speed window</span>
+                  <span className="text-blue-600 font-mono text-xs">{settings.doubleTapSpeed}ms</span>
+                </label>
+                <p className="text-xs text-gray-500 mb-2">Maximum time between taps to register a double-tap zoom.</p>
+                <input 
+                  type="range" 
+                  min="100" 
+                  max="800" 
+                  step="50" 
+                  value={settings.doubleTapSpeed}
+                  onChange={(e) => updateSetting('doubleTapSpeed', parseInt(e.target.value))}
+                  className="w-full accent-blue-600"
+                />
+              </div>
+
+              <div>
+                <label className="flex items-center justify-between text-sm font-semibold mb-2">
+                  <span>Zoom Animation Duration</span>
+                  <span className="text-blue-600 font-mono text-xs">{settings.animationDuration}ms</span>
+                </label>
+                <p className="text-xs text-gray-500 mb-2">How long the double-tap zoom transition takes.</p>
+                <input 
+                  type="range" 
+                  min="0" 
+                  max="1000" 
+                  step="50" 
+                  value={settings.animationDuration}
+                  onChange={(e) => updateSetting('animationDuration', parseInt(e.target.value))}
+                  className="w-full accent-blue-600"
+                />
+              </div>
+              
+              <div className="pt-2">
+                <button 
+                  onClick={resetSettings}
+                  className="w-full py-2.5 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-sm font-semibold rounded-xl transition-colors"
+                >
+                  Reset Defaults
+                </button>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Safe Area & Header */}
       <header className="pt-[max(1rem,env(safe-area-inset-top))] px-4 pb-3 border-b border-gray-200 dark:border-gray-800 sepia:border-sepia-100 flex items-center justify-between gap-3 shrink-0 bg-white/95 dark:bg-gray-900/95 sepia:bg-sepia-50/95 backdrop-blur z-20">
         <div className="flex items-center gap-2">
@@ -158,79 +246,70 @@ export function FileManager({ onOpenFile, onCompressPDF, onSync, user, onLogin }
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
-          {/* Theme Selector Button */}
+                <div className="flex items-center gap-1.5">
+          {/* Burger Menu */}
           <div className="relative">
-            <button 
-              id="theme-menu-toggle"
-              onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}
+            <button
+              onClick={() => setIsBurgerMenuOpen(!isBurgerMenuOpen)}
               className="p-2.5 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 sepia:hover:bg-sepia-100 active:scale-95 transition-all text-gray-700 dark:text-gray-300"
-              aria-label="Toggle theme menu"
             >
-              {theme === 'system' ? <Laptop className="w-5 h-5" /> : theme === 'dark' ? <Moon className="w-5 h-5" /> : theme === 'sepia' ? <Coffee className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+              <Menu className="w-6 h-6" />
             </button>
-
-            {isThemeMenuOpen && (
+            {isBurgerMenuOpen && (
               <>
-                <div 
-                  className="fixed inset-0 z-30" 
-                  onClick={() => setIsThemeMenuOpen(false)} 
-                />
-                <div className="absolute right-0 mt-2 py-1.5 w-36 bg-white dark:bg-gray-800 sepia:bg-sepia-50 rounded-2xl shadow-2xl border border-gray-100 dark:border-gray-700 sepia:border-sepia-200 z-40 animate-in fade-in zoom-in-95 duration-100">
-                  <button 
-                    onClick={() => { setTheme('light'); setIsThemeMenuOpen(false); }} 
-                    className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm font-medium ${theme === 'light' ? 'text-blue-600 font-semibold' : 'text-gray-700 dark:text-gray-300'}`}
+                <div className="fixed inset-0 z-30" onClick={() => setIsBurgerMenuOpen(false)} />
+                <div className="absolute right-0 top-12 mt-2 w-56 bg-white dark:bg-gray-800 sepia:bg-sepia-50 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 z-40 overflow-hidden py-1">
+                  
+                  {/* Theme Toggle (Inline) */}
+                  <div className="px-4 py-2 border-b border-gray-100 dark:border-gray-700">
+                    <div className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Theme</div>
+                    <div className="flex gap-1">
+                      {['light', 'dark', 'sepia', 'system'].map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => { setTheme(t as any); setIsBurgerMenuOpen(false); }}
+                          className={`flex-1 p-2 flex items-center justify-center rounded-lg transition-colors ${theme === t ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                        >
+                          {t === 'light' ? <Sun className="w-4 h-4" /> : t === 'dark' ? <Moon className="w-4 h-4" /> : t === 'sepia' ? <Coffee className="w-4 h-4" /> : <Laptop className="w-4 h-4" />}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => { setIsBurgerMenuOpen(false); setIsSettingsModalOpen(true); }}
+                    className="w-full text-left px-4 py-3 text-sm flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors text-gray-700 dark:text-gray-200"
                   >
-                    <Sun className="w-4 h-4" /> Light
+                    <SettingsIcon className="w-4 h-4" />
+                    Advanced Settings
                   </button>
-                  <button 
-                    onClick={() => { setTheme('dark'); setIsThemeMenuOpen(false); }} 
-                    className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm font-medium ${theme === 'dark' ? 'text-blue-600 font-semibold' : 'text-gray-700 dark:text-gray-300'}`}
-                  >
-                    <Moon className="w-4 h-4" /> Dark
-                  </button>
-                  <button 
-                    onClick={() => { setTheme('sepia'); setIsThemeMenuOpen(false); }} 
-                    className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm font-medium ${theme === 'sepia' ? 'text-blue-600 font-semibold' : 'text-gray-700 dark:text-gray-300'}`}
-                  >
-                    <Coffee className="w-4 h-4" /> Sepia
-                  </button>
-                  <button 
-                    onClick={() => { setTheme('system'); setIsThemeMenuOpen(false); }} 
-                    className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm font-medium ${theme === 'system' ? 'text-blue-600 font-semibold' : 'text-gray-700 dark:text-gray-300'}`}
-                  >
-                    <Laptop className="w-4 h-4" /> System
-                  </button>
+
+                  <div className="h-px bg-gray-100 dark:bg-gray-700 my-1" />
+                  
+                  {user ? (
+                    <button
+                      onClick={async () => {
+                        await logout();
+                        setIsBurgerMenuOpen(false);
+                      }}
+                      className="w-full text-left px-4 py-3 text-sm flex items-center gap-3 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 transition-colors"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      Logout ({user.email})
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => { setIsBurgerMenuOpen(false); onLogin(); }}
+                      className="w-full text-left px-4 py-3 text-sm flex items-center gap-3 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 transition-colors"
+                    >
+                      <Cloud className="w-4 h-4" />
+                      Login with Google
+                    </button>
+                  )}
                 </div>
               </>
             )}
           </div>
-
-          {/* Sync & User Profile */}
-          {user ? (
-            <div className="flex items-center gap-2 bg-blue-50/50 dark:bg-blue-900/10 px-2 py-1.5 rounded-xl border border-blue-100 dark:border-blue-900/30">
-              <span className="text-[10px] font-semibold text-blue-800 dark:text-blue-300 px-1 truncate max-w-[80px] sm:max-w-[120px]">
-                {user.email}
-              </span>
-              <button 
-                onClick={onSync} 
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 active:scale-95 transition-all shadow-xs"
-                title="Sync to Google Drive"
-              >
-                <Cloud className="w-3.5 h-3.5" /> <span>Sync</span>
-              </button>
-            </div>
-          ) : (
-            <button 
-              onClick={onLogin} 
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 active:scale-95 transition-all"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24">
-                <path fill="currentColor" d="M21.35,11.1H12.18V13.83H18.69C18.36,17.64 15.19,19.27 12.19,19.27C8.36,19.27 5,16.25 5,12C5,7.9 8.16,4.73 12.2,4.73C15.29,4.73 17.1,6.7 17.1,6.7L19,4.72C19,4.72 16.56,2 12.1,2C6.42,2 2.03,6.8 2.03,12C2.03,17.05 6.16,22 12.25,22C17.6,22 21.5,18.33 21.5,12.91C21.5,11.76 21.35,11.1 21.35,11.1V11.1Z" />
-              </svg>
-              <span>Drive Backup</span>
-            </button>
-          )}
         </div>
       </header>
 
