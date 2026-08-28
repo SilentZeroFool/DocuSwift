@@ -42,9 +42,18 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   const [pageSize, setPageSize] = useState<{ width: number; height: number }>({ width: 595, height: 842 });
   
   // Zoom & Scale
-  const [userZoom, setUserZoom] = useState(1.0); // 1.0 = 100% fit to width
+  const [userZoom, setUserZoom] = useState(1.0); // CSS scale (instant)
+  const [renderZoom, setRenderZoom] = useState(1.0); // High-res PDF rendering scale
   const [fitScale, setFitScale] = useState(1.0);
   const [isPageChanging, setIsPageChanging] = useState(false);
+
+  // Debounce userZoom to renderZoom for smooth performance
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setRenderZoom(userZoom);
+    }, 350); // wait 350ms after pinch/zoom stops to re-render PDF
+    return () => clearTimeout(timer);
+  }, [userZoom]);
 
   // Tools & Annotations
   const [activeTool, setActiveTool] = useState<Tool>('pan');
@@ -135,7 +144,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         const calculatedFit = calculateFitScale(baseViewport.width);
         setFitScale(calculatedFit);
 
-        const currentScale = calculatedFit * userZoom;
+        const currentScale = calculatedFit * renderZoom;
         const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
         const viewport = page.getViewport({ scale: currentScale * dpr });
 
@@ -187,7 +196,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         renderTask.cancel();
       }
     };
-  }, [pdf, pageNum, userZoom, fitScale, calculateFitScale]);
+  }, [pdf, pageNum, renderZoom, fitScale, calculateFitScale]);
 
   // 4. Redraw Annotations on Overlay Canvas
   const redrawAnnotations = useCallback((canvasWidth?: number, canvasHeight?: number) => {
@@ -364,7 +373,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
     setIsSaving(true);
     try {
-      const pdfDoc = await PDFDocument.load(doc.data);
+      const pdfDoc = await PDFDocument.load(new Uint8Array(doc.data), { ignoreEncryption: true });
 
       for (const ann of annotations) {
         if (ann.page > pdfDoc.getPageCount()) continue;
@@ -406,7 +415,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
       const updatedDocument: LocalDocument = {
         ...doc,
-        data: savedBytes.buffer.slice(0) as ArrayBuffer,
+        data: savedBytes.buffer.slice(savedBytes.byteOffset, savedBytes.byteOffset + savedBytes.byteLength) as ArrayBuffer,
         updatedAt: Date.now(),
         size: savedBytes.length
       };
@@ -644,20 +653,34 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
       {/* Main PDF Scrollable Stage */}
       <div 
         ref={containerRef}
-        className="flex-1 overflow-auto relative touch-pan-x touch-pan-y"
+        className="flex-1 overflow-auto relative touch-pan-x touch-pan-y flex"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
-        <div className="min-h-full w-full flex items-center justify-center p-2 sm:p-4">
-          <div className="relative shadow-xl rounded-md overflow-hidden bg-white shrink-0">
+        <div className="m-auto p-4" style={{ 
+          minWidth: `${(pageSize.width * fitScale * userZoom) + 32}px`,
+          minHeight: `${(pageSize.height * fitScale * userZoom) + 32}px`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}>
+          <div 
+            className="relative shadow-xl rounded-md overflow-hidden bg-white shrink-0 origin-center"
+            style={{
+              width: pageSize.width * fitScale * renderZoom,
+              height: pageSize.height * fitScale * renderZoom,
+              transform: `scale(${userZoom / renderZoom})`,
+              // The browser handles scale instantly for smooth pinch-to-zoom
+            }}
+          >
             {/* Background PDF Canvas */}
-            <canvas ref={canvasRef} className="block bg-white" />
+            <canvas ref={canvasRef} className="block bg-white w-full h-full" />
 
             {/* Foreground Annotation Canvas */}
             <canvas 
               ref={drawCanvasRef} 
-              className={`absolute inset-0 ${
+              className={`absolute inset-0 w-full h-full ${
                 activeTool === 'pan' 
                   ? 'cursor-grab touch-pan-x touch-pan-y pointer-events-none' 
                   : 'cursor-crosshair touch-none'

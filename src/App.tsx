@@ -13,15 +13,59 @@ import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'f
 import { syncDocuments } from './lib/sync';
 import { PDFDocument } from 'pdf-lib';
 import { saveLocalDocument } from './lib/idb';
+import { App as CapApp } from '@capacitor/app';
+import { Filesystem } from '@capacitor/filesystem';
 
 export default function App() {
   const [activeDoc, setActiveDoc] = useState<LocalDocument | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, u => setUser(u));
-    return unsub;
+
+    const initIntentHandler = async () => {
+      try {
+        await CapApp.addListener('appUrlOpen', async (data) => {
+          if (data.url.toLowerCase().endsWith('.pdf') || data.url.startsWith('file://') || data.url.startsWith('content://')) {
+            try {
+              const fileData = await Filesystem.readFile({ path: data.url });
+              const binaryString = atob(fileData.data as string);
+              const len = binaryString.length;
+              const bytes = new Uint8Array(len);
+              for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              const newDoc: LocalDocument = {
+                id: crypto.randomUUID(),
+                name: data.url.split('/').pop() || 'Imported_Document.pdf',
+                size: bytes.length,
+                data: bytes.buffer.slice(0) as ArrayBuffer,
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                tags: [],
+                isBackedUp: false
+              };
+              await saveLocalDocument(newDoc);
+              setActiveDoc(newDoc);
+              setRefreshKey(k => k + 1);
+            } catch (err) {
+              console.error("Failed to load PDF from intent", err);
+              alert("Failed to load PDF: " + String(err));
+            }
+          }
+        });
+      } catch (e) {
+        console.warn("Capacitor App plugin not available", e);
+      }
+    };
+    initIntentHandler();
+
+    return () => {
+      unsub();
+      CapApp.removeAllListeners();
+    };
   }, []);
 
   const handleLogin = async () => {
@@ -47,11 +91,9 @@ export default function App() {
     }
   };
 
-  const [refreshKey, setRefreshKey] = useState(0);
-
   const handleCompressPDF = async (doc: LocalDocument) => {
     try {
-      const pdfDoc = await PDFDocument.load(doc.data);
+      const pdfDoc = await PDFDocument.load(new Uint8Array(doc.data), { ignoreEncryption: true });
       const savedBytes = await pdfDoc.save({ useObjectStreams: false }); 
       
       const compressedDoc: LocalDocument = {
@@ -59,7 +101,7 @@ export default function App() {
         id: crypto.randomUUID(),
         name: `Compressed_${doc.name}`,
         size: savedBytes.length,
-        data: savedBytes.buffer.slice(0) as ArrayBuffer,
+        data: savedBytes.buffer.slice(savedBytes.byteOffset, savedBytes.byteOffset + savedBytes.byteLength) as ArrayBuffer,
         isBackedUp: false,
         createdAt: Date.now(),
         updatedAt: Date.now()
