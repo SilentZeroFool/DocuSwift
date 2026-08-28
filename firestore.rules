@@ -1,0 +1,62 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Functions
+    function isSignedIn() { return request.auth != null; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+    
+    function isValidDocument(data) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'size', 'createdAt', 'updatedAt']) 
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId == request.auth.uid
+        && data.name is string && data.name.size() <= 256
+        && data.size is number
+        && data.createdAt is number
+        && data.updatedAt is number
+        && (!('tags' in data) || (data.tags is list && data.tags.size() <= 10))
+        && (!('isBackedUp' in data) || data.isBackedUp is bool)
+        && (!('cloudPath' in data) || (data.cloudPath is string && data.cloudPath.size() <= 512));
+    }
+
+    // Split collection approach: users/{userId}/documents/{documentId}
+    match /users/{userId}/documents/{documentId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      
+      allow list: if isSignedIn() 
+        && request.auth.uid == userId; // Since it's a subcollection, checking userId path is sufficient if rules are strict. But we should also check resource.data.
+        // Wait, list rules evaluate against resource.data.
+        // If we just check userId in path, anyone can't read others if they can't match path.
+        // BUT to be safe as per Pillar 8:
+      
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && isValidId(documentId)
+        && isValidDocument(incoming())
+        && incoming().userId == userId;
+        
+      allow update: if isSignedIn()
+        && request.auth.uid == userId
+        && isValidId(documentId)
+        && isValidDocument(incoming())
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'tags', 'isBackedUp', 'cloudPath', 'updatedAt', 'size'])
+        );
+        
+      allow delete: if isSignedIn()
+        && request.auth.uid == userId
+        && isValidId(documentId);
+    }
+  }
+}

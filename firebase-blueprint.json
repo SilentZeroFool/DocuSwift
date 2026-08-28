@@ -1,0 +1,60 @@
+{
+  "entities": {
+    "Document": {
+      "title": "Document",
+      "description": "Metadata for a user's PDF document",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the document"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner of the document"
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the file"
+        },
+        "size": {
+          "type": "number",
+          "description": "Size of the file in bytes"
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Creation timestamp (ms)"
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Last update timestamp (ms)"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "User tags for the document",
+          "maxLength": 10
+        },
+        "isBackedUp": {
+          "type": "boolean",
+          "description": "Whether it's backed up to cloud"
+        },
+        "cloudPath": {
+          "type": "string",
+          "description": "Path in Firebase Storage"
+        }
+      },
+      "required": ["id", "userId", "name", "size", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}/documents/{documentId}": {
+      "schema": {
+        "$ref": "#/entities/Document"
+      },
+      "description": "Stores document metadata for a user"
+    }
+  }
+}

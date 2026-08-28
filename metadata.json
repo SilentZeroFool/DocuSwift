@@ -1,0 +1,6 @@
+{
+  "name": "DocuSwift",
+  "description": "An easy to use PDF reader Android app with offline access, cloud backup, annotation tools, file management, and compression.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

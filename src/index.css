@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+@theme {
+  --color-sepia-50: #f4ecd8;
+  --color-sepia-100: #e4d7be;
+  --color-sepia-900: #433422;
+}
+
+@custom-variant dark (&:where(.dark, .dark *));
+@custom-variant sepia (&:where(.sepia, .sepia *));
+
+html.sepia {
+  background-color: var(--color-sepia-50);
+  color: var(--color-sepia-900);
+}
+
+body {
+  @apply bg-white text-gray-900 transition-colors duration-200;
+}
+html.dark body {
+  @apply bg-gray-900 text-gray-100;
+}
+html.sepia body {
+  @apply bg-sepia-50 text-sepia-900;
+}
+
