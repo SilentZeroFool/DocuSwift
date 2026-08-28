@@ -99,7 +99,7 @@ export default function App() {
   const handleCompressPDF = async (doc: LocalDocument, qualityPercent: number) => {
     try {
       setIsCompressing(true);
-      const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(doc.data) });
+      const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(doc.data.slice(0)) });
       const loadedPdf = await loadingTask.promise;
       
       const newPdf = await PDFDocument.create();

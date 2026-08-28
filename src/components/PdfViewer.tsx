@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { 
@@ -84,7 +85,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
     let isCancelled = false;
     const loadPDF = async () => {
       try {
-        const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(doc.data) });
+        const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(doc.data.slice(0)) });
         const loadedPdf = await loadingTask.promise;
         if (isCancelled) return;
         setPdf(loadedPdf);
@@ -125,6 +126,8 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   }, [pageSize.width, calculateFitScale]);
 
   // 3. Render PDF Page to Background Canvas
+  const lastRenderedPageRef = useRef<number>(0);
+
   useEffect(() => {
     if (!pdf || !canvasRef.current || !drawCanvasRef.current) return;
 
@@ -133,7 +136,9 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
     const renderPage = async () => {
       try {
-        setIsPageChanging(true);
+        if (pageNum !== lastRenderedPageRef.current) {
+          setIsPageChanging(true);
+        }
         const page = await pdf.getPage(pageNum);
         if (isCancelled) return;
 
@@ -181,6 +186,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
         redrawAnnotations(viewport.width, viewport.height);
         setIsPageChanging(false);
+        lastRenderedPageRef.current = pageNum;
       } catch (e) {
         if (!(e instanceof pdfjsLib.RenderingCancelledException)) {
           console.error('Render error:', e);
@@ -378,23 +384,30 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         if (Math.hypot(dx, dy) < 30) {
           const container = containerRef.current;
           if (container) {
+            const rect = container.getBoundingClientRect();
+            const tapX = touch.clientX - rect.left + container.scrollLeft;
+            const tapY = touch.clientY - rect.top + container.scrollTop;
+
             if (userZoom > 1.1) {
-               setUserZoom(1.0);
-            } else {
-               const rect = container.getBoundingClientRect();
-               // Tap position relative to container's top-left
-               const tapX = touch.clientX - rect.left + container.scrollLeft;
-               const tapY = touch.clientY - rect.top + container.scrollTop;
+               const targetZoom = 1.0;
+               const zoomRatio = targetZoom / userZoom;
                
+               flushSync(() => {
+                 setUserZoom(targetZoom);
+               });
+               
+               container.scrollLeft = tapX * zoomRatio - (rect.width / 2);
+               container.scrollTop = tapY * zoomRatio - (rect.height / 2);
+            } else {
                const targetZoom = 1.5;
                const zoomRatio = targetZoom / userZoom;
                
-               setUserZoom(targetZoom);
+               flushSync(() => {
+                 setUserZoom(targetZoom);
+               });
                
-               setTimeout(() => {
-                 container.scrollLeft = tapX * zoomRatio - (rect.width / 2);
-                 container.scrollTop = tapY * zoomRatio - (rect.height / 2);
-               }, 10);
+               container.scrollLeft = tapX * zoomRatio - (rect.width / 2);
+               container.scrollTop = tapY * zoomRatio - (rect.height / 2);
             }
           }
           lastTapRef.current = null;
@@ -415,7 +428,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
     setIsSaving(true);
     try {
-      const pdfDoc = await PDFDocument.load(new Uint8Array(doc.data), { ignoreEncryption: true });
+      const pdfDoc = await PDFDocument.load(new Uint8Array(doc.data.slice(0)), { ignoreEncryption: true });
 
       for (const ann of annotations) {
         if (ann.page > pdfDoc.getPageCount()) continue;
@@ -469,7 +482,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
       showToast("Annotations saved to PDF!");
 
       // Reload fresh PDF bytes
-      const loadingTask = pdfjsLib.getDocument({ data: savedBytes });
+      const loadingTask = pdfjsLib.getDocument({ data: savedBytes.slice(0) });
       const loadedPdf = await loadingTask.promise;
       setPdf(loadedPdf);
     } catch (e) {
