@@ -206,14 +206,20 @@ export function FileManager({ onOpenFile, onCompressPDF, onSync, user, onLogin }
             )}
           </div>
 
-          {/* Sync Button */}
+          {/* Sync & User Profile */}
           {user ? (
-            <button 
-              onClick={onSync} 
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 active:scale-95 transition-all"
-            >
-              <Cloud className="w-4 h-4" /> <span>Sync to Drive</span>
-            </button>
+            <div className="flex items-center gap-2 bg-blue-50/50 dark:bg-blue-900/10 px-2 py-1.5 rounded-xl border border-blue-100 dark:border-blue-900/30">
+              <span className="text-[10px] font-semibold text-blue-800 dark:text-blue-300 px-1 truncate max-w-[80px] sm:max-w-[120px]">
+                {user.email}
+              </span>
+              <button 
+                onClick={onSync} 
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 active:scale-95 transition-all shadow-xs"
+                title="Sync to Google Drive"
+              >
+                <Cloud className="w-3.5 h-3.5" /> <span>Sync</span>
+              </button>
+            </div>
           ) : (
             <button 
               onClick={onLogin} 
@@ -434,6 +440,24 @@ export function FileManager({ onOpenFile, onCompressPDF, onSync, user, onLogin }
                   <div className="text-xs text-gray-500">View pages with smooth zooming & annotation</div>
                 </div>
               </button>
+
+              {user && (
+                <button 
+                  onClick={() => {
+                    setActiveMenuDoc(null);
+                    onSync();
+                  }}
+                  className="w-full flex items-center gap-3 px-3 py-3.5 rounded-2xl text-left font-medium text-sm hover:bg-gray-50 dark:hover:bg-gray-800 sepia:hover:bg-sepia-100 active:bg-gray-100 dark:active:bg-gray-700 transition-colors text-gray-900 dark:text-gray-100"
+                >
+                  <div className="p-2 rounded-xl bg-green-50 text-green-600 dark:bg-green-900/30">
+                    <Cloud className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="font-semibold">Backup to Drive</div>
+                    <div className="text-xs text-gray-500">Securely sync this document</div>
+                  </div>
+                </button>
+              )}
 
               <button 
                 onClick={() => {

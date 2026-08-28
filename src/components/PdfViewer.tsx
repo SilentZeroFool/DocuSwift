@@ -9,6 +9,9 @@ import {
 import { LocalDocument } from '../types';
 import { PDFDocument, rgb, LineCapStyle } from 'pdf-lib';
 import { saveLocalDocument } from '../lib/idb';
+import { Capacitor } from '@capacitor/core';
+import { Share } from '@capacitor/share';
+import { Filesystem, Directory } from '@capacitor/filesystem';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -44,17 +47,10 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   
   // Zoom & Scale
   const [userZoom, setUserZoom] = useState(1.0); // CSS scale (instant)
-  const [renderZoom, setRenderZoom] = useState(1.0); // High-res PDF rendering scale
+  const renderZoom = 2.0; // Fixed high-res PDF rendering scale
   const [fitScale, setFitScale] = useState(1.0);
   const [isPageChanging, setIsPageChanging] = useState(false);
-
-  // Debounce userZoom to renderZoom for smooth performance
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setRenderZoom(userZoom);
-    }, 350); // wait 350ms after pinch/zoom stops to re-render PDF
-    return () => clearTimeout(timer);
-  }, [userZoom]);
+  const currentPdfDataRef = useRef<ArrayBuffer>(doc.data);
 
   // Tools & Annotations
   const [activeTool, setActiveTool] = useState<Tool>('pan');
@@ -85,7 +81,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
     let isCancelled = false;
     const loadPDF = async () => {
       try {
-        const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(doc.data.slice(0)) });
+        const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(currentPdfDataRef.current.slice(0)) });
         const loadedPdf = await loadingTask.promise;
         if (isCancelled) return;
         setPdf(loadedPdf);
@@ -456,7 +452,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
     setIsSaving(true);
     try {
-      const pdfDoc = await PDFDocument.load(new Uint8Array(doc.data.slice(0)), { ignoreEncryption: true });
+      const pdfDoc = await PDFDocument.load(new Uint8Array(currentPdfDataRef.current.slice(0)), { ignoreEncryption: true });
 
       for (const ann of annotations) {
         if (ann.page > pdfDoc.getPageCount()) continue;
@@ -503,6 +499,8 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         size: savedBytes.length
       };
 
+      currentPdfDataRef.current = updatedDocument.data;
+
       await saveLocalDocument(updatedDocument);
 
       setAnnotations([]);
@@ -521,17 +519,45 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
     }
   };
 
-  const handleDownload = () => {
-    const blob = new Blob([doc.data], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = doc.name;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast("PDF exported to downloads!");
+  const handleDownload = async () => {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const uint8Array = new Uint8Array(currentPdfDataRef.current);
+        let binary = '';
+        const len = uint8Array.byteLength;
+        const chunkSize = 8192;
+        for (let i = 0; i < len; i += chunkSize) {
+          binary += String.fromCharCode.apply(null, uint8Array.subarray(i, i + chunkSize) as unknown as number[]);
+        }
+        const base64Data = btoa(binary);
+
+        const savedFile = await Filesystem.writeFile({
+          path: doc.name,
+          data: base64Data,
+          directory: Directory.Cache
+        });
+
+        await Share.share({
+          title: doc.name,
+          url: savedFile.uri,
+          dialogTitle: 'Export PDF'
+        });
+      } catch (err) {
+        console.error('Error sharing:', err);
+        showToast("Error exporting PDF.");
+      }
+    } else {
+      const blob = new Blob([currentPdfDataRef.current], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = doc.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast("PDF exported to downloads!");
+    }
   };
 
   const showToast = (msg: string) => {
