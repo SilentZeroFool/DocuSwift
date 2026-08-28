@@ -47,27 +47,27 @@ export default function App() {
     }
   };
 
+  const [refreshKey, setRefreshKey] = useState(0);
+
   const handleCompressPDF = async (doc: LocalDocument) => {
     try {
-      alert("Compressing PDF... This might take a moment.");
-      // Basic compression trick with pdf-lib: re-saving sometimes removes unused objects
       const pdfDoc = await PDFDocument.load(doc.data);
       const savedBytes = await pdfDoc.save({ useObjectStreams: false }); 
       
-      const compressedDoc = {
+      const compressedDoc: LocalDocument = {
         ...doc,
-        id: crypto.randomUUID(), // Save as a new document
+        id: crypto.randomUUID(),
         name: `Compressed_${doc.name}`,
         size: savedBytes.length,
-        data: savedBytes.buffer,
+        data: savedBytes.buffer.slice(0) as ArrayBuffer,
         isBackedUp: false,
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
       
       await saveLocalDocument(compressedDoc);
-      alert(`Compressed version saved as ${compressedDoc.name}`);
-      window.location.reload(); // Quick way to refresh File manager
+      setRefreshKey(k => k + 1);
+      alert(`Compressed version created: "${compressedDoc.name}" (${(compressedDoc.size / 1024 / 1024).toFixed(2)} MB)`);
     } catch (e) {
       console.error(e);
       alert("Failed to compress PDF");
@@ -81,6 +81,7 @@ export default function App() {
           <PdfViewer doc={activeDoc} onClose={() => setActiveDoc(null)} />
         ) : (
           <FileManager 
+            key={refreshKey}
             onOpenFile={setActiveDoc} 
             onCompressPDF={handleCompressPDF}
             onSync={handleSync}

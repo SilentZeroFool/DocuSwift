@@ -14,13 +14,31 @@ html.sepia {
   color: var(--color-sepia-900);
 }
 
-body {
-  @apply bg-white text-gray-900 transition-colors duration-200;
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
 }
+
+body {
+  @apply bg-white text-gray-900 transition-colors duration-200 antialiased select-none;
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
 html.dark body {
   @apply bg-gray-900 text-gray-100;
 }
 html.sepia body {
   @apply bg-sepia-50 text-sepia-900;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
