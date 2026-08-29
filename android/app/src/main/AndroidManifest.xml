@@ -33,6 +33,14 @@
                 <data android:host="*" />
             </intent-filter>
 
+            <!-- Google OAuth redirect (system-browser PKCE sign-in flow) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.docuswift.app" />
+            </intent-filter>
+
         </activity>
 
         <provider
