@@ -1,58 +1,29 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, User, signOut } from 'firebase/auth';
+import { getAuth, signInWithPopup, signInWithCredential, GoogleAuthProvider, onAuthStateChanged, User, signOut } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Capacitor } from '@capacitor/core';
+import { signInWithGoogleSystemBrowser } from './googleOAuth';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/drive.file');
+provider.setCustomParameters({ prompt: 'consent' });
 
-provider.setCustomParameters({
-  prompt: 'consent',
-  access_type: 'offline'
-});
-
-let isSigningIn = false;
 let cachedAccessToken: string | null = null;
 
 export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
-  let redirectCheckDone = false;
-  
-  if (Capacitor.isNativePlatform()) {
-    getRedirectResult(auth).then((result) => {
-      redirectCheckDone = true;
-      if (result) {
-        const credential = GoogleAuthProvider.credentialFromResult(result);
-        if (credential?.accessToken) {
-          cachedAccessToken = credential.accessToken;
-          if (onAuthSuccess) onAuthSuccess(result.user, cachedAccessToken);
-        }
-      }
-    }).catch((e) => {
-      redirectCheckDone = true;
-      console.error("Redirect result error:", e);
-    });
-  } else {
-    redirectCheckDone = true;
-  }
-
-  return onAuthStateChanged(auth, async (user: User | null) => {
-    if (user) {
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
-      } else if (!isSigningIn) {
-        // Wait a bit for redirect check to finish on mobile
-        setTimeout(() => {
-          if (!cachedAccessToken && onAuthFailure) {
-            onAuthFailure();
-          }
-        }, Capacitor.isNativePlatform() ? 2000 : 500);
-      }
+  return onAuthStateChanged(auth, (user: User | null) => {
+    if (user && cachedAccessToken) {
+      if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
     } else {
+      // Either signed out, or signed in with no cached Drive token (e.g. a
+      // stale session after an app restart). We can't call Drive without a
+      // fresh token, so treat this the same as "not signed in" and let the
+      // UI prompt the user to sign in again.
       cachedAccessToken = null;
       if (onAuthFailure) onAuthFailure();
     }
@@ -60,25 +31,23 @@ export const initAuth = (
 };
 
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
-  try {
-    isSigningIn = true;
-    if (Capacitor.isNativePlatform()) {
-      await signInWithRedirect(auth, provider);
-      return null;
-    } else {
-      const result = await signInWithPopup(auth, provider);
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      if (!credential?.accessToken) {
-        throw new Error('Failed to get access token from Firebase Auth');
-      }
-      cachedAccessToken = credential.accessToken;
-      return { user: result.user, accessToken: cachedAccessToken };
+  if (Capacitor.isNativePlatform()) {
+    // WebView-based popup/redirect sign-in is blocked by Google on Android.
+    // Use the system browser (Custom Tabs) with a PKCE auth-code flow instead.
+    const tokens = await signInWithGoogleSystemBrowser();
+    if (!tokens) return null; // user cancelled
+    const credential = GoogleAuthProvider.credential(tokens.idToken, tokens.accessToken);
+    const result = await signInWithCredential(auth, credential);
+    cachedAccessToken = tokens.accessToken;
+    return { user: result.user, accessToken: cachedAccessToken };
+  } else {
+    const result = await signInWithPopup(auth, provider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (!credential?.accessToken) {
+      throw new Error('Failed to get access token from Firebase Auth');
     }
-  } catch (error: any) {
-    console.error('Sign in error:', error);
-    throw error;
-  } finally {
-    isSigningIn = false;
+    cachedAccessToken = credential.accessToken;
+    return { user: result.user, accessToken: cachedAccessToken };
   }
 };
 
