@@ -510,12 +510,21 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         }
 
         if (ann.points.length < 2) continue;
-        
-        const pathData = ann.points.map((p, i) => 
-          `${i === 0 ? 'M' : 'L'} ${p.x * pWidth} ${(1 - p.y) * pHeight}`
+
+        // IMPORTANT: pdf-lib's drawSvgPath() ALREADY flips the Y axis internally
+        // (it applies a `scale(1, -1)` because SVG paths are top-down while PDF
+        // pages are bottom-up). Pre-flipping here with (1 - p.y) double-flips the
+        // points, which sends every annotation off the bottom edge of the page —
+        // that's why saves "succeed" (the PDF grows) but nothing is ever visible.
+        // Fix: pass plain top-down coordinates, and anchor the path's local
+        // origin at the top of the page via `y: pHeight` so the internal flip
+        // lands it back in the visible page area.
+        const pathData = ann.points.map((p, i) =>
+          `${i === 0 ? 'M' : 'L'} ${p.x * pWidth} ${p.y * pHeight}`
         ).join(' ');
 
         page.drawSvgPath(pathData, {
+          y: pHeight,
           borderColor: rgb(r, g, b),
           borderWidth: ann.type === 'highlight' ? Math.max(12, ann.strokeWidth) : Math.max(1.5, ann.strokeWidth),
           color: undefined, // Crucial: prevents filling the path with black
