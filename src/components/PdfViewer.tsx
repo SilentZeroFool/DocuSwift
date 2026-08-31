@@ -511,20 +511,40 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
         if (ann.points.length < 2) continue;
 
-        // IMPORTANT: pdf-lib's drawSvgPath() ALREADY flips the Y axis internally
-        // (it applies a `scale(1, -1)` because SVG paths are top-down while PDF
-        // pages are bottom-up). Pre-flipping here with (1 - p.y) double-flips the
-        // points, which sends every annotation off the bottom edge of the page —
-        // that's why saves "succeed" (the PDF grows) but nothing is ever visible.
-        // Fix: pass plain top-down coordinates, and anchor the path's local
-        // origin at the top of the page via `y: pHeight` so the internal flip
-        // lands it back in the visible page area.
-        const pathData = ann.points.map((p, i) =>
-          `${i === 0 ? 'M' : 'L'} ${p.x * pWidth} ${p.y * pHeight}`
-        ).join(' ');
+        // pdf-lib's page.getSize() returns the RAW MediaBox dimensions, which
+        // do NOT account for the page's /Rotate entry. But the annotation's
+        // normalized points were captured against the ROTATED/displayed page
+        // (what pdfjs renders, and what the user actually drew on). Scanned
+        // and phone-camera PDFs very commonly have /Rotate set, so this has
+        // to be corrected for or annotations land in the wrong place (often
+        // off the page entirely) on exactly those files.
+        //
+        // rotation is normalized to one of 0 / 90 / 180 / 270.
+        const rotation = ((page.getRotation().angle % 360) + 360) % 360;
+
+        // Maps a normalized DISPLAY-space point (top-down, 0..1, matching what
+        // the user drew on screen) to the page's raw content-stream space
+        // (bottom-left origin, y-up). Verified against poppler renders for
+        // all 4 rotation cases.
+        const toRawPoint = (nx: number, ny: number): { x: number; y: number } => {
+          switch (rotation) {
+            case 90: return { x: ny * pWidth, y: nx * pHeight };
+            case 180: return { x: (1 - nx) * pWidth, y: ny * pHeight };
+            case 270: return { x: (1 - ny) * pWidth, y: (1 - nx) * pHeight };
+            default: return { x: nx * pWidth, y: (1 - ny) * pHeight };
+          }
+        };
+
+        // pdf-lib's drawSvgPath() applies its own internal Y flip
+        // (scale(1, -1)) with the path anchored at (0, 0) by default, so
+        // feeding it (rawX, -rawY) lands the point at (rawX, rawY) in raw
+        // content space - exactly the target computed above.
+        const pathData = ann.points.map((p, i) => {
+          const raw = toRawPoint(p.x, p.y);
+          return `${i === 0 ? 'M' : 'L'} ${raw.x} ${-raw.y}`;
+        }).join(' ');
 
         page.drawSvgPath(pathData, {
-          y: pHeight,
           borderColor: rgb(r, g, b),
           borderWidth: ann.type === 'highlight' ? Math.max(12, ann.strokeWidth) : Math.max(1.5, ann.strokeWidth),
           color: undefined, // Crucial: prevents filling the path with black
