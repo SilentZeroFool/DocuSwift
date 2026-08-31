@@ -85,7 +85,8 @@ export default function App() {
       }
     } catch (e) {
       console.error(e);
-      alert("Login failed");
+      const msg = e instanceof Error ? e.message : String(e);
+      alert("Login failed: " + msg);
     }
   };
 
