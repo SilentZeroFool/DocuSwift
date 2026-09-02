@@ -528,10 +528,10 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         // all 4 rotation cases.
         const toRawPoint = (nx: number, ny: number): { x: number; y: number } => {
           switch (rotation) {
-            case 90: return { x: ny * pWidth, y: nx * pHeight };
-            case 180: return { x: (1 - nx) * pWidth, y: ny * pHeight };
-            case 270: return { x: (1 - ny) * pWidth, y: (1 - nx) * pHeight };
-            default: return { x: nx * pWidth, y: (1 - ny) * pHeight };
+            case 90: return { x: ny * pWidth, y: (1 - nx) * pHeight };
+            case 180: return { x: (1 - nx) * pWidth, y: (1 - ny) * pHeight };
+            case 270: return { x: (1 - ny) * pWidth, y: nx * pHeight };
+            default: return { x: nx * pWidth, y: ny * pHeight };
           }
         };
 
@@ -541,12 +541,14 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         // content space - exactly the target computed above.
         const pathData = ann.points.map((p, i) => {
           const raw = toRawPoint(p.x, p.y);
-          return `${i === 0 ? 'M' : 'L'} ${raw.x} ${-raw.y}`;
+          return `${i === 0 ? 'M' : 'L'} ${raw.x} ${raw.y}`;
         }).join(' ');
 
         // Do NOT use color: undefined as it fails in some environments. 
         // We use borderOpacity for the stroke transparency, and BlendMode for highlighters.
-        const drawOpts = {
+        const drawOpts: any = {
+          x: 0,
+          y: pHeight,
           borderColor: rgb(r, g, b),
           borderWidth: ann.type === 'highlight' ? Math.max(12, ann.strokeWidth) : Math.max(1.5, ann.strokeWidth),
           borderOpacity: alpha,
@@ -554,7 +556,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         
         // Add blend mode for highlighters to ensure they don't obscure text
         if (ann.type === 'highlight') {
-          drawOpts.blendMode = 'Multiply'; // In pdf-lib 1.17.1, string 'Multiply' works if BlendMode is not imported, but let's use the object just in case.
+          drawOpts.blendMode = BlendMode.Multiply; // In pdf-lib 1.17.1, string 'Multiply' works if BlendMode is not imported, but let's use the object just in case.
         }
         
         page.drawSvgPath(pathData, drawOpts as any);

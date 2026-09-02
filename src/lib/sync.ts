@@ -49,26 +49,46 @@ export async function syncDocuments() {
         }
       };
 
-      const formData = new FormData();
-      formData.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-      formData.append('file', new Blob([localDoc.data], { type: 'application/pdf' }));
-
-      let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
-      let method = 'POST';
       
-      if (localDoc.cloudPath) {
-        url = `https://www.googleapis.com/upload/drive/v3/files/${localDoc.cloudPath}?uploadType=multipart`;
-        method = 'PATCH';
+      let cloudFileId = localDoc.cloudPath;
+      
+      if (!cloudFileId) {
+        // Step 1: Create metadata to get an ID in the correct folder
+        const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(metadata)
+        });
+        const createData = await createRes.json();
+        cloudFileId = createData.id;
+      } else {
+        // Update metadata
+        await fetch(`https://www.googleapis.com/drive/v3/files/${cloudFileId}`, {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(metadata)
+        });
       }
 
-      const res = await fetch(url, {
-        method,
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData
+      // Step 2: Upload actual media
+      const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${cloudFileId}?uploadType=media`, {
+        method: 'PATCH',
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/pdf'
+        },
+        body: localDoc.data
       });
       const data = await res.json();
       
-      await saveLocalDocument({ ...localDoc, isBackedUp: true, cloudPath: data.id });
+      await saveLocalDocument({ ...localDoc, isBackedUp: true, cloudPath: cloudFileId });
+
     } catch (e) {
       console.error('Failed to sync doc up', e);
     }
