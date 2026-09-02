@@ -1,4 +1,6 @@
-import { initializeApp } from 'firebase/app';
+const fs = require('fs');
+
+const content = `import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Capacitor } from '@capacitor/core';
@@ -122,33 +124,6 @@ export const logout = async () => {
     cachedAccessToken = null;
   }
 };
+`;
 
-
-export const handleNativeTokens = (tokens: any) => {
-    cachedAccessToken = tokens.accessToken;
-    const payload = parseJwt(tokens.idToken);
-    
-    nativeMockUser = {
-      uid: payload.sub || 'native_user',
-      email: payload.email || 'user@gmail.com',
-      displayName: payload.name || 'Google User',
-      photoURL: payload.picture || '',
-      emailVerified: true,
-      isAnonymous: false,
-      metadata: {},
-      providerData: [],
-      refreshToken: '',
-      tenantId: null,
-      delete: async () => {},
-      getIdToken: async () => tokens.idToken,
-      getIdTokenResult: async () => ({} as any),
-      reload: async () => {},
-      toJSON: () => ({})
-    } as unknown as User;
-
-    localStorage.setItem('docuswift_native_user', JSON.stringify(nativeMockUser));
-    localStorage.setItem('docuswift_native_token', cachedAccessToken);
-    
-    // Trigger auth state change manually if possible, or just reload to pick it up in initAuth
-    window.location.reload();
-};
+fs.writeFileSync('src/lib/firebase.ts', content);

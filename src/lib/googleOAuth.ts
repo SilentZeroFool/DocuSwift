@@ -59,6 +59,7 @@ export async function signInWithGoogleSystemBrowser(): Promise<GoogleTokens | nu
 
   let settled = false;
   let resolveCode: (code: string | null) => void;
+  localStorage.setItem('oauth_verifier', verifier);
   const codePromise = new Promise<string | null>((resolve) => { resolveCode = resolve; });
 
   const urlListener = await CapApp.addListener('appUrlOpen', async (data) => {
@@ -106,4 +107,42 @@ export async function signInWithGoogleSystemBrowser(): Promise<GoogleTokens | nu
     accessToken: tokenData.access_token,
     expiresIn: tokenData.expires_in,
   };
+}
+
+
+export async function initOAuth(onSuccess: (tokens: GoogleTokens) => void) {
+  CapApp.addListener('appUrlOpen', async (data) => {
+    if (data.url.startsWith(REDIRECT_URI)) {
+      await Browser.close().catch(() => {});
+      const url = new URL(data.url.replace(REDIRECT_URI, 'https://redirect'));
+      const code = url.searchParams.get('code');
+      const verifier = localStorage.getItem('oauth_verifier');
+      if (code && verifier) {
+        try {
+          const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              client_id: CLIENT_ID,
+              code,
+              code_verifier: verifier,
+              grant_type: 'authorization_code',
+              redirect_uri: REDIRECT_URI,
+            }).toString(),
+          });
+          if (tokenRes.ok) {
+            const tokenData = await tokenRes.json();
+            const tokens = {
+              idToken: tokenData.id_token,
+              accessToken: tokenData.access_token,
+              expiresIn: tokenData.expires_in,
+            };
+            onSuccess(tokens);
+          }
+        } catch(e) {
+          console.error("Token exchange failed", e);
+        }
+      }
+    }
+  });
 }

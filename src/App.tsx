@@ -10,6 +10,8 @@ import { ThemeProvider } from './components/ThemeContext';
 import { SettingsProvider } from './components/SettingsContext';
 import { LocalDocument } from './types';
 import { initAuth, googleSignIn, logout } from './lib/firebase';
+import { initOAuth } from './lib/googleOAuth';
+import { handleNativeTokens } from './lib/firebase';
 import { User } from 'firebase/auth';
 import { syncDocuments } from './lib/sync';
 import { PDFDocument } from 'pdf-lib';
@@ -35,6 +37,10 @@ export default function App() {
     );
     
     const initIntentHandler = async () => {
+        initOAuth(tokens => {
+            handleNativeTokens(tokens);
+        });
+
       try {
         await CapApp.addListener('appUrlOpen', async (data) => {
           if (data.url.toLowerCase().endsWith('.pdf') || data.url.startsWith('file://') || data.url.startsWith('content://')) {
