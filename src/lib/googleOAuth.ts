@@ -1,3 +1,39 @@
+
+let exchangingCode: string | null = null;
+let exchangePromise: Promise<GoogleTokens> | null = null;
+
+async function exchangeTokenSafe(code: string, verifier: string): Promise<GoogleTokens> {
+  if (exchangingCode === code && exchangePromise) {
+    return exchangePromise;
+  }
+  exchangingCode = code;
+  exchangePromise = fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: CLIENT_ID,
+      code,
+      code_verifier: verifier,
+      grant_type: 'authorization_code',
+      redirect_uri: REDIRECT_URI,
+    }).toString(),
+  }).then(async (tokenRes) => {
+    if (!tokenRes.ok) {
+      const errText = await tokenRes.text();
+      throw new Error(`Token exchange failed: ${errText}`);
+    }
+    const tokenData = await tokenRes.json();
+    return {
+      idToken: tokenData.id_token,
+      accessToken: tokenData.access_token,
+      expiresIn: tokenData.expires_in,
+    };
+  }).finally(() => {
+    localStorage.removeItem('oauth_verifier');
+  });
+  return exchangePromise;
+}
+
 import { Browser } from '@capacitor/browser';
 import { App as CapApp } from '@capacitor/app';
 
@@ -84,29 +120,7 @@ export async function signInWithGoogleSystemBrowser(): Promise<GoogleTokens | nu
   await finishedListener.remove();
   if (!code) return null;
 
-  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: CLIENT_ID,
-      code,
-      code_verifier: verifier,
-      grant_type: 'authorization_code',
-      redirect_uri: REDIRECT_URI,
-    }).toString(),
-  });
-
-  if (!tokenRes.ok) {
-    const errText = await tokenRes.text();
-    throw new Error(`Token exchange failed: ${errText}`);
-  }
-
-  const tokenData = await tokenRes.json();
-  return {
-    idToken: tokenData.id_token,
-    accessToken: tokenData.access_token,
-    expiresIn: tokenData.expires_in,
-  };
+  return await exchangeTokenSafe(code, verifier);
 }
 
 
@@ -119,26 +133,8 @@ export async function initOAuth(onSuccess: (tokens: GoogleTokens) => void) {
       const verifier = localStorage.getItem('oauth_verifier');
       if (code && verifier) {
         try {
-          const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-              client_id: CLIENT_ID,
-              code,
-              code_verifier: verifier,
-              grant_type: 'authorization_code',
-              redirect_uri: REDIRECT_URI,
-            }).toString(),
-          });
-          if (tokenRes.ok) {
-            const tokenData = await tokenRes.json();
-            const tokens = {
-              idToken: tokenData.id_token,
-              accessToken: tokenData.access_token,
-              expiresIn: tokenData.expires_in,
-            };
-            onSuccess(tokens);
-          }
+          const tokens = await exchangeTokenSafe(code, verifier);
+          onSuccess(tokens);
         } catch(e) {
           console.error("Token exchange failed", e);
         }

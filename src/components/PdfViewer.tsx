@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { LocalDocument } from '../types';
 import { useSettings } from './SettingsContext';
-import { PDFDocument, rgb, LineCapStyle } from 'pdf-lib';
+import { PDFDocument, rgb, LineCapStyle, BlendMode } from 'pdf-lib';
 import { saveLocalDocument } from '../lib/idb';
 import { Capacitor } from '@capacitor/core';
 import { Share } from '@capacitor/share';
