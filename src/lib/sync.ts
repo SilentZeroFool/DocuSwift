@@ -83,7 +83,7 @@ export async function syncDocuments() {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/pdf'
         },
-        body: localDoc.data
+        body: new Blob([localDoc.data], { type: 'application/pdf' })
       });
       const data = await res.json();
       
