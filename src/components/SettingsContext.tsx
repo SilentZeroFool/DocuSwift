@@ -4,12 +4,14 @@ interface Settings {
   zoomSensitivity: number; // e.g. 0.5 to 2.0
   doubleTapSpeed: number; // e.g. 100 to 500 ms
   animationDuration: number; // e.g. 0 to 500 ms
+  panningSpeed: number; // e.g. 0.5 to 3.0
 }
 
 const defaultSettings: Settings = {
   zoomSensitivity: 1.0,
   doubleTapSpeed: 300,
   animationDuration: 200,
+  panningSpeed: 1.0,
 };
 
 interface SettingsContextType {
