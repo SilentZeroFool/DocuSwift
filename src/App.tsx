@@ -12,9 +12,9 @@ import { LocalDocument } from './types';
 import { PDFDocument } from 'pdf-lib';
 import { saveLocalDocument } from './lib/idb';
 import { App as CapApp } from '@capacitor/app';
-import { Capacitor, registerPlugin } from '@capacitor/core';
-const JetpackPdf = registerPlugin('JetpackPdf');
-import { Filesystem, Directory } from '@capacitor/filesystem';
+
+import { Filesystem } from '@capacitor/filesystem';
+import { Capacitor } from '@capacitor/core';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 
@@ -24,41 +24,71 @@ export default function App() {
   const [activeDoc, setActiveDoc] = useState<LocalDocument | null>(null);
       const [refreshKey, setRefreshKey] = useState(0);
   const [isCompressing, setIsCompressing] = useState(false);
-
-  const handleOpenFile = async (doc: LocalDocument) => {
-    if (Capacitor.isNativePlatform()) {
-      try {
-        
-        let binary = '';
-        const bytes = new Uint8Array(doc.data);
-        const len = bytes.byteLength;
-        for (let i = 0; i < len; i++) {
-            binary += String.fromCharCode(bytes[i]);
-        }
-        const base64 = window.btoa(binary);
-
-        const path = `temp_${doc.id}.pdf`;
-        const res = await Filesystem.writeFile({
-          path,
-          data: base64,
-          directory: Directory.Cache
-        });
-        await JetpackPdf.openPdf({ uri: res.uri });
-        
-        // When they come back, do we need to read it back?
-        // Jetpack PDF (PdfViewerFragment) currently is view-only or annotations don't save back directly without action.
-        // For now, let's also fallback to our PdfViewer if Jetpack fails or if we want to ensure annotations work in our viewer too.
-      } catch (e) {
-        console.error("Native PDF failed:", e);
-        setActiveDoc(doc);
-      }
-    } else {
-      setActiveDoc(doc);
-    }
-  };
-
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => { setIsMounted(true); }, []);
 
   useEffect(() => {
+    const initIntentHandler = async () => {
+      try {
+        await CapApp.addListener('appUrlOpen', async (data) => {
+          if (data.url.toLowerCase().endsWith('.pdf') || data.url.startsWith('file://') || data.url.startsWith('content://')) {
+            try {
+              let urlToFetch = data.url;
+              if (data.url.startsWith('file://') || data.url.startsWith('content://')) {
+                  urlToFetch = Capacitor.convertFileSrc(data.url);
+              }
+              const fetchRes = await fetch(urlToFetch);
+              const arrayBuf = await fetchRes.arrayBuffer();
+              const bytes = new Uint8Array(arrayBuf);
+              
+              const newDoc: LocalDocument = {
+                id: crypto.randomUUID(),
+                name: data.url.split('/').pop() || 'Imported_Document.pdf',
+                size: bytes.length,
+                data: bytes.buffer.slice(0) as ArrayBuffer,
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                tags: [],
+                isBackedUp: false
+              };
+              await saveLocalDocument(newDoc);
+              setActiveDoc(newDoc);
+              setRefreshKey(k => k + 1);
+            } catch (err) {
+              console.error("Failed to load PDF from intent", err);
+              // Fallback to Filesystem.readFile if fetch fails (due to content:// strictness)
+              try {
+                  const fileData = await Filesystem.readFile({ path: data.url });
+                  const binaryString = window.atob(fileData.data);
+                  const len = binaryString.length;
+                  const bytes = new Uint8Array(len);
+                  for (let i = 0; i < len; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                  }
+                  const newDoc: LocalDocument = {
+                    id: crypto.randomUUID(),
+                    name: data.url.split('/').pop() || 'Imported_Document.pdf',
+                    size: bytes.length,
+                    data: bytes.buffer.slice(0) as ArrayBuffer,
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                    tags: [],
+                    isBackedUp: false
+                  };
+                  await saveLocalDocument(newDoc);
+                  setActiveDoc(newDoc);
+                  setRefreshKey(k => k + 1);
+              } catch(e) {
+                 alert("Failed to load external PDF: " + String(e));
+              }
+            }
+          }
+        });
+      } catch (e) {
+        console.warn("Capacitor App plugin not available", e);
+      }
+    };
+    initIntentHandler();
     return () => { CapApp.removeAllListeners(); };
   }, []);
 
@@ -136,13 +166,13 @@ export default function App() {
   return (
     <ThemeProvider>
     <SettingsProvider>
-      <div className="h-screen w-full font-sans antialiased bg-white dark:bg-gray-900 sepia:bg-sepia-50 text-gray-900 dark:text-gray-100 sepia:text-sepia-900 flex flex-col">
+      {!isMounted ? <div className="h-screen w-full bg-white dark:bg-gray-900 sepia:bg-sepia-50" /> : <div className="h-screen w-full font-sans antialiased animate-in fade-in duration-500 bg-white dark:bg-gray-900 sepia:bg-sepia-50 text-gray-900 dark:text-gray-100 sepia:text-sepia-900 flex flex-col">
         {activeDoc ? (
           <PdfViewer doc={activeDoc} onClose={() => { setActiveDoc(null); setRefreshKey(prev => prev + 1); }} />
         ) : (
           <FileManager 
             key={refreshKey}
-            onOpenFile={handleOpenFile} 
+            onOpenFile={setActiveDoc} 
             onCompressPDF={handleCompressPDF}
             
           />
@@ -168,7 +198,8 @@ export default function App() {
           </div>
         )}
       </div>
-        </SettingsProvider>
+      }
+    </SettingsProvider>
     </ThemeProvider>
   );
 }

@@ -1,15 +1,6 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover, user-scalable=no" />
-    <title>DocuSwift - PDF Reader</title>
-    <meta name="description" content="An easy to use PDF reader with offline access and cloud backup." />
-    <meta property="og:title" content="My Google AI Studio App" />
-    <meta property="og:description" content="An application built with Google AI Studio." />
-    <meta property="og:type" content="website" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <style>
+const fs = require('fs');
+let html = fs.readFileSync('index.html', 'utf-8');
+const script = `  <style>
     body { margin: 0; background-color: #ffffff; }
     @media (prefers-color-scheme: dark) {
       body { background-color: #111827; }
@@ -30,10 +21,6 @@
       }
     } catch(e) {}
   </script>
-</head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
-
+</head>`;
+html = html.replace('</head>', script);
+fs.writeFileSync('index.html', html);
