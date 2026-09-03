@@ -3,6 +3,7 @@ apply plugin: 'com.android.application'
 android {
     namespace = "com.docuswift.app"
     compileSdk = rootProject.ext.compileSdkVersion
+    compileSdkExtension = 19
     defaultConfig {
         applicationId "com.docuswift.app"
         minSdkVersion rootProject.ext.minSdkVersion
