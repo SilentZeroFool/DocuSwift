@@ -42,6 +42,7 @@
             </intent-filter>
 
         </activity>
+        <activity android:name=".PdfActivity" android:theme="@style/AppTheme" android:exported="false"></activity>
 
         <provider
             android:name="androidx.core.content.FileProvider"

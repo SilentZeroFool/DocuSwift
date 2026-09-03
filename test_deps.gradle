@@ -1,0 +1,3 @@
+apply plugin: 'java'
+repositories { google(); mavenCentral() }
+dependencies { implementation 'androidx.pdf:pdf-viewer-fragment:1.0.0-beta01' }

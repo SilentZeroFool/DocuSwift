@@ -12,7 +12,9 @@ import { LocalDocument } from './types';
 import { PDFDocument } from 'pdf-lib';
 import { saveLocalDocument } from './lib/idb';
 import { App as CapApp } from '@capacitor/app';
-import { Filesystem } from '@capacitor/filesystem';
+import { Capacitor, registerPlugin } from '@capacitor/core';
+const JetpackPdf = registerPlugin('JetpackPdf');
+import { Filesystem, Directory } from '@capacitor/filesystem';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 
@@ -22,6 +24,39 @@ export default function App() {
   const [activeDoc, setActiveDoc] = useState<LocalDocument | null>(null);
       const [refreshKey, setRefreshKey] = useState(0);
   const [isCompressing, setIsCompressing] = useState(false);
+
+  const handleOpenFile = async (doc: LocalDocument) => {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        
+        let binary = '';
+        const bytes = new Uint8Array(doc.data);
+        const len = bytes.byteLength;
+        for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        const base64 = window.btoa(binary);
+
+        const path = `temp_${doc.id}.pdf`;
+        const res = await Filesystem.writeFile({
+          path,
+          data: base64,
+          directory: Directory.Cache
+        });
+        await JetpackPdf.openPdf({ uri: res.uri });
+        
+        // When they come back, do we need to read it back?
+        // Jetpack PDF (PdfViewerFragment) currently is view-only or annotations don't save back directly without action.
+        // For now, let's also fallback to our PdfViewer if Jetpack fails or if we want to ensure annotations work in our viewer too.
+      } catch (e) {
+        console.error("Native PDF failed:", e);
+        setActiveDoc(doc);
+      }
+    } else {
+      setActiveDoc(doc);
+    }
+  };
+
 
   useEffect(() => {
     return () => { CapApp.removeAllListeners(); };
@@ -107,7 +142,7 @@ export default function App() {
         ) : (
           <FileManager 
             key={refreshKey}
-            onOpenFile={setActiveDoc} 
+            onOpenFile={handleOpenFile} 
             onCompressPDF={handleCompressPDF}
             
           />

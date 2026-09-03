@@ -4,6 +4,8 @@ import {
   Sun, Moon, Coffee, Laptop, X, FileText, Minimize2, Download, Eye, Plus, Check, Share2,
   Menu, Settings as SettingsIcon, LogOut
 } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
+import { FilePicker } from '@capawesome/capacitor-file-picker';
 import { getLocalDocuments, saveLocalDocument, deleteLocalDocument } from '../lib/idb';
 import { LocalDocument } from '../types';
 import { useTheme } from './ThemeContext';
@@ -40,6 +42,47 @@ export function FileManager({ onOpenFile, onCompressPDF,  }: FileManagerProps) {
   const loadDocuments = async () => {
     const docs = await getLocalDocuments();
     setDocuments(docs.sort((a, b) => b.updatedAt - a.updatedAt));
+  };
+
+
+  const handleNativeFileUpload = async () => {
+    try {
+      const result = await FilePicker.pickFiles({
+        types: ['application/pdf'],
+        multiple: true,
+        readData: true
+      });
+      
+      let hasError = false;
+      for (const file of result.files) {
+        if (!file.data) continue;
+        const binaryString = window.atob(file.data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        
+        const newDoc: LocalDocument = {
+          id: crypto.randomUUID(),
+          name: file.name,
+          size: file.size || bytes.byteLength,
+          data: bytes.buffer,
+          isBackedUp: false,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        await saveLocalDocument(newDoc);
+      }
+      
+      if (!hasError) {
+        const updated = await getLocalDocuments();
+        setDocuments(updated);
+      }
+    } catch (e: any) {
+      if (e.message !== 'pickFiles canceled.') {
+        alert("Failed to pick files: " + e.message);
+      }
+    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -513,23 +556,7 @@ export function FileManager({ onOpenFile, onCompressPDF,  }: FileManagerProps) {
                 </div>
               </button>
 
-              {user && (
-                <button 
-                  onClick={() => {
-                    setActiveMenuDoc(null);
-                    onSync();
-                  }}
-                  className="w-full flex items-center gap-3 px-3 py-3.5 rounded-2xl text-left font-medium text-sm hover:bg-gray-50 dark:hover:bg-gray-800 sepia:hover:bg-sepia-100 active:bg-gray-100 dark:active:bg-gray-700 transition-colors text-gray-900 dark:text-gray-100"
-                >
-                  <div className="p-2 rounded-xl bg-green-50 text-green-600 dark:bg-green-900/30">
-                    <Cloud className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="font-semibold">Backup to Drive</div>
-                    <div className="text-xs text-gray-500">Securely sync this document</div>
-                  </div>
-                </button>
-              )}
+              
 
               <button 
                 onClick={() => {
