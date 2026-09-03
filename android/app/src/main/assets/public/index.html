@@ -4,14 +4,35 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover, user-scalable=no" />
     <title>DocuSwift - PDF Reader</title>
-    <meta name="description" content="An easy to use PDF reader with offline access and cloud backup." />
-    <meta property="og:title" content="My Google AI Studio App" />
-    <meta property="og:description" content="An application built with Google AI Studio." />
+    <meta name="description" content="An easy to use PDF reader Android app with offline access, cloud backup, annotation tools, file management, and compression." />
+    <meta property="og:title" content="DocuSwift - PDF Reader" />
+    <meta property="og:description" content="An easy to use PDF reader Android app with offline access, cloud backup, annotation tools, file management, and compression." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <script type="module" crossorigin src="/assets/index-eZqE5oWD.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BStc3YtS.css">
-  <link rel="manifest" href="/manifest.webmanifest"></head>
+    <style>
+    body { margin: 0; background-color: #ffffff; }
+    @media (prefers-color-scheme: dark) {
+      body { background-color: #111827; }
+    }
+  </style>
+  <script>
+    // Apply local storage theme immediately before React boots
+    try {
+      const theme = localStorage.getItem('docuswift_theme');
+      if (theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+        document.body.style.backgroundColor = '#111827';
+      } else if (theme === 'sepia') {
+        document.documentElement.classList.add('sepia');
+        document.body.style.backgroundColor = '#f4ecd8';
+      } else {
+        document.body.style.backgroundColor = '#ffffff';
+      }
+    } catch(e) {}
+  </script>
+  <script type="module" crossorigin src="/assets/index-BuTI-9qv.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-C9fyxM37.css">
+<link rel="manifest" href="/manifest.webmanifest"></head>
   <body>
     <div id="root"></div>
   </body>
