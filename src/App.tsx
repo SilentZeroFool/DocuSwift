@@ -9,11 +9,6 @@ import { PdfViewer } from './components/PdfViewer';
 import { ThemeProvider } from './components/ThemeContext';
 import { SettingsProvider } from './components/SettingsContext';
 import { LocalDocument } from './types';
-import { initAuth, googleSignIn, logout } from './lib/firebase';
-import { initOAuth } from './lib/googleOAuth';
-import { handleNativeTokens } from './lib/firebase';
-import { User } from 'firebase/auth';
-import { syncDocuments } from './lib/sync';
 import { PDFDocument } from 'pdf-lib';
 import { saveLocalDocument } from './lib/idb';
 import { App as CapApp } from '@capacitor/app';
@@ -25,90 +20,15 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 export default function App() {
   const [activeDoc, setActiveDoc] = useState<LocalDocument | null>(null);
-  const [user, setUser] = useState<User | null>(null);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
+      const [refreshKey, setRefreshKey] = useState(0);
   const [isCompressing, setIsCompressing] = useState(false);
 
   useEffect(() => {
-    const unsub = initAuth(
-      (u) => setUser(u),
-      () => setUser(null)
-    );
-    
-    const initIntentHandler = async () => {
-        initOAuth(tokens => {
-            handleNativeTokens(tokens);
-        });
-
-      try {
-        await CapApp.addListener('appUrlOpen', async (data) => {
-          if (data.url.toLowerCase().endsWith('.pdf') || data.url.startsWith('file://') || data.url.startsWith('content://')) {
-            try {
-              const fileData = await Filesystem.readFile({ path: data.url });
-              const binaryString = atob(fileData.data as string);
-              const len = binaryString.length;
-              const bytes = new Uint8Array(len);
-              for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-              }
-              const newDoc: LocalDocument = {
-                id: crypto.randomUUID(),
-                name: data.url.split('/').pop() || 'Imported_Document.pdf',
-                size: bytes.length,
-                data: bytes.buffer.slice(0) as ArrayBuffer,
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-                tags: [],
-                isBackedUp: false
-              };
-              await saveLocalDocument(newDoc);
-              setActiveDoc(newDoc);
-              setRefreshKey(k => k + 1);
-            } catch (err) {
-              console.error("Failed to load PDF from intent", err);
-              alert("Failed to load PDF: " + String(err));
-            }
-          }
-        });
-      } catch (e) {
-        console.warn("Capacitor App plugin not available", e);
-      }
-    };
-    initIntentHandler();
-
-    return () => {
-      unsub();
-      CapApp.removeAllListeners();
-    };
+    return () => { CapApp.removeAllListeners(); };
   }, []);
 
-  const handleLogin = async () => {
-    try {
-      const res = await googleSignIn();
-      if (res) {
-        setUser(res.user);
-      }
-    } catch (e) {
-      console.error(e);
-      const msg = e instanceof Error ? e.message : String(e);
-      alert("Login failed: " + msg);
-    }
-  };
-
-  const handleSync = async () => {
-    if (!user) return;
-    setIsSyncing(true);
-    try {
-      await syncDocuments();
-      alert("Sync completed!");
-    } catch (e) {
-      alert("Sync failed");
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
+  
+  
   const handleCompressPDF = async (doc: LocalDocument, qualityPercent: number) => {
     try {
       setIsCompressing(true);
@@ -189,13 +109,11 @@ export default function App() {
             key={refreshKey}
             onOpenFile={setActiveDoc} 
             onCompressPDF={handleCompressPDF}
-            onSync={handleSync}
-            user={user}
-            onLogin={handleLogin}
+            
           />
         )}
         
-        {isSyncing && (
+        {false && (
           <div className="fixed bottom-4 right-4 bg-blue-600 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 animate-pulse">
             <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>

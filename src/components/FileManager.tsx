@@ -8,18 +8,15 @@ import { getLocalDocuments, saveLocalDocument, deleteLocalDocument } from '../li
 import { LocalDocument } from '../types';
 import { useTheme } from './ThemeContext';
 import { useSettings } from './SettingsContext';
-import { logout } from '../lib/firebase';
 
 interface FileManagerProps {
   key?: React.Key;
   onOpenFile: (doc: LocalDocument) => void;
   onCompressPDF: (doc: LocalDocument, qualityPercent: number) => void;
-  onSync: () => void;
-  user: any;
-  onLogin: () => void;
+  
 }
 
-export function FileManager({ onOpenFile, onCompressPDF, onSync, user, onLogin }: FileManagerProps) {
+export function FileManager({ onOpenFile, onCompressPDF,  }: FileManagerProps) {
   const { settings, updateSetting, resetSettings } = useSettings();
   const [isBurgerMenuOpen, setIsBurgerMenuOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
@@ -301,26 +298,7 @@ export function FileManager({ onOpenFile, onCompressPDF, onSync, user, onLogin }
 
                   <div className="h-px bg-gray-100 dark:bg-gray-700 my-1" />
                   
-                  {user ? (
-                    <button
-                      onClick={async () => {
-                        await logout();
-                        setIsBurgerMenuOpen(false);
-                      }}
-                      className="w-full text-left px-4 py-3 text-sm flex items-center gap-3 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 transition-colors"
-                    >
-                      <LogOut className="w-4 h-4" />
-                      Logout ({user.displayName || user.email || 'User'})
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => { setIsBurgerMenuOpen(false); onLogin(); }}
-                      className="w-full text-left px-4 py-3 text-sm flex items-center gap-3 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 transition-colors"
-                    >
-                      <Cloud className="w-4 h-4" />
-                      Login with Google
-                    </button>
-                  )}
+                  
                 </div>
               </>
             )}

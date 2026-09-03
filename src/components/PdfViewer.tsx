@@ -484,7 +484,12 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         // Fallback if it somehow became a typed array or buffer
         arrayBuffer = new Uint8Array(buf as any).buffer;
       }
-      const pdfDoc = await PDFDocument.load(new Uint8Array(arrayBuffer), { ignoreEncryption: true });
+      let pdfDoc;
+      try {
+        pdfDoc = await PDFDocument.load(new Uint8Array(arrayBuffer), { ignoreEncryption: true });
+      } catch (err: any) {
+        throw new Error("Failed to load PDF bytes: " + err.message);
+      }
 
       for (const ann of annotations) {
         if (ann.page > pdfDoc.getPageCount()) continue;
@@ -559,10 +564,32 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
           drawOpts.blendMode = BlendMode.Multiply; // In pdf-lib 1.17.1, string 'Multiply' works if BlendMode is not imported, but let's use the object just in case.
         }
         
-        page.drawSvgPath(pathData, drawOpts as any);
+        try {
+          page.drawSvgPath(pathData, drawOpts as any);
+        } catch (svgErr) {
+          console.warn("Failed to draw SVG path natively, falling back to lines", svgErr);
+          // Fallback: draw straight lines between points if SVG fails
+          for (let i = 1; i < ann.points.length; i++) {
+             const start = toRawPoint(ann.points[i-1].x, ann.points[i-1].y);
+             const end = toRawPoint(ann.points[i].x, ann.points[i].y);
+             page.drawLine({
+               start: { x: start.x, y: pHeight - start.y },
+               end: { x: end.x, y: pHeight - end.y },
+               thickness: ann.type === 'highlight' ? Math.max(12, ann.strokeWidth) : Math.max(1.5, ann.strokeWidth),
+               color: rgb(r, g, b),
+               opacity: alpha
+             });
+          }
+        }
       }
 
-      const savedBytes = await pdfDoc.save({ useObjectStreams: false });
+      let savedBytes;
+      try {
+        savedBytes = await pdfDoc.save(); 
+      } catch (saveErr) {
+        console.warn("Standard save failed, trying without object streams", saveErr);
+        savedBytes = await pdfDoc.save({ useObjectStreams: false });
+      }
 
       const updatedDocument: LocalDocument = {
         ...doc,
