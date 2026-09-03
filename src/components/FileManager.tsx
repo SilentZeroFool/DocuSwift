@@ -8,6 +8,7 @@ import { Capacitor } from '@capacitor/core';
 import { FilePicker } from '@capawesome/capacitor-file-picker';
 import { getLocalDocuments, saveLocalDocument, deleteLocalDocument } from '../lib/idb';
 import { LocalDocument } from '../types';
+import { useToast } from './Toast';
 import { useTheme } from './ThemeContext';
 import { useSettings } from './SettingsContext';
 
@@ -19,6 +20,7 @@ interface FileManagerProps {
 }
 
 export function FileManager({ onOpenFile, onCompressPDF,  }: FileManagerProps) {
+  const { showToast } = useToast();
   const { settings, updateSetting, resetSettings } = useSettings();
   const [isBurgerMenuOpen, setIsBurgerMenuOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
@@ -49,7 +51,7 @@ export function FileManager({ onOpenFile, onCompressPDF,  }: FileManagerProps) {
     try {
       const result = await FilePicker.pickFiles({
         types: ['application/pdf'],
-        multiple: true,
+        limit: 0, // 0 for unlimited
         readData: false
       });
       
@@ -81,10 +83,11 @@ export function FileManager({ onOpenFile, onCompressPDF,  }: FileManagerProps) {
           id: crypto.randomUUID(),
           name: file.name,
           size: file.size || bytes.byteLength,
-          data: bytes.buffer,
+          data: bytes.buffer as ArrayBuffer,
           isBackedUp: false,
           createdAt: Date.now(),
-          updatedAt: Date.now()
+          updatedAt: Date.now(),
+          tags: []
         };
         await saveLocalDocument(newDoc);
       }
@@ -95,7 +98,7 @@ export function FileManager({ onOpenFile, onCompressPDF,  }: FileManagerProps) {
       }
     } catch (e: any) {
       if (e.message !== 'pickFiles canceled.') {
-        alert("Failed to pick files: " + e.message);
+        showToast("Failed to pick files: " + e.message, "error");
       }
     }
   };

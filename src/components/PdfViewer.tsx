@@ -7,6 +7,7 @@ import {
   Eraser, Hand, Maximize2, Palette, RotateCcw, Check, ChevronLeft, ChevronRight, X, Layers
 } from 'lucide-react';
 import { LocalDocument } from '../types';
+import { useToast } from './Toast';
 import { useSettings } from './SettingsContext';
 import { PDFDocument, rgb, LineCapStyle, BlendMode } from 'pdf-lib';
 import { saveLocalDocument } from '../lib/idb';
@@ -41,6 +42,7 @@ const HIGHLIGHT_COLORS = ['rgba(250, 204, 21, 0.45)', 'rgba(74, 222, 128, 0.45)'
 const DRAW_COLORS = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#111827'];
 
 export function PdfViewer({ doc, onClose }: PdfViewerProps) {
+  const { showToast } = useToast();
   const [pdf, setPdf] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [pageNum, setPageNum] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -66,7 +68,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [saveToast, setSaveToast] = useState<string | null>(null);
+  
   const [isJumpModalOpen, setIsJumpModalOpen] = useState(false);
   const [jumpPageInput, setJumpPageInput] = useState('1');
 
@@ -99,7 +101,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         setPageNum(1);
       } catch (e) {
         console.error("Error loading PDF", e);
-        alert("Failed to load PDF document.");
+        showToast("Failed to load PDF document.", "error");
       }
     };
     loadPDF();
@@ -620,7 +622,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
       setPdf(loadedPdf);
     } catch (e) {
       console.error('Error saving PDF:', e);
-      alert("Error saving annotations: " + (e instanceof Error ? e.message : String(e)));
+      showToast("Error saving annotations: " + (e instanceof Error ? e.message : String(e)), "error");
       showToast("Error saving annotations: " + (e instanceof Error ? e.message : String(e)));
     } finally {
       setIsSaving(false);
@@ -668,10 +670,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
     }
   };
 
-  const showToast = (msg: string) => {
-    setSaveToast(msg);
-    setTimeout(() => setSaveToast(null), 3000);
-  };
+
 
   const handleJumpPage = () => {
     const p = parseInt(jumpPageInput, 10);
@@ -1025,10 +1024,10 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
       )}
 
       {/* Floating Save Toast Notification */}
-      {saveToast && (
+      {false && (
         <div className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-gray-900/90 text-white dark:bg-white/90 dark:text-gray-900 px-4 py-2.5 rounded-full shadow-2xl text-xs font-semibold flex items-center gap-2 z-50 animate-in fade-in slide-in-from-bottom duration-150">
           <Check className="w-4 h-4 text-emerald-400" />
-          <span>{saveToast}</span>
+          <span>Saved</span>
         </div>
       )}
     </div>

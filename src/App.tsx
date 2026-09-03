@@ -8,6 +8,7 @@ import { FileManager } from './components/FileManager';
 import { PdfViewer } from './components/PdfViewer';
 import { ThemeProvider } from './components/ThemeContext';
 import { SettingsProvider } from './components/SettingsContext';
+import { ToastProvider, useToast } from './components/Toast';
 import { LocalDocument } from './types';
 import { PDFDocument } from 'pdf-lib';
 import { saveLocalDocument } from './lib/idb';
@@ -21,11 +22,13 @@ import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
-export default function App() {
+function AppContent() {
   const [activeDoc, setActiveDoc] = useState<LocalDocument | null>(null);
-      const [refreshKey, setRefreshKey] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [isCompressing, setIsCompressing] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
+  const { showToast } = useToast();
+
   useEffect(() => { setIsMounted(true); }, []);
 
   useEffect(() => {
@@ -55,12 +58,12 @@ export default function App() {
               await saveLocalDocument(newDoc);
               setActiveDoc(newDoc);
               setRefreshKey(k => k + 1);
+              showToast("PDF imported successfully", "success");
             } catch (err) {
               console.error("Failed to load PDF from intent", err);
-              // Fallback to Filesystem.readFile if fetch fails (due to content:// strictness)
               try {
                   const fileData = await Filesystem.readFile({ path: data.url });
-                  const binaryString = window.atob(fileData.data);
+                  const binaryString = window.atob(fileData.data as string);
                   const len = binaryString.length;
                   const bytes = new Uint8Array(len);
                   for (let i = 0; i < len; i++) {
@@ -79,8 +82,9 @@ export default function App() {
                   await saveLocalDocument(newDoc);
                   setActiveDoc(newDoc);
                   setRefreshKey(k => k + 1);
+                  showToast("PDF imported successfully", "success");
               } catch(e) {
-                 alert("Failed to load external PDF: " + String(e));
+                 showToast("Failed to load external PDF: " + String(e), "error");
               }
             }
           }
@@ -91,10 +95,8 @@ export default function App() {
     };
     initIntentHandler();
     return () => { CapApp.removeAllListeners(); };
-  }, []);
+  }, [showToast]);
 
-  
-  
   const handleCompressPDF = async (doc: LocalDocument, qualityPercent: number) => {
     try {
       setIsCompressing(true);
@@ -103,7 +105,6 @@ export default function App() {
       
       const newPdf = await PDFDocument.create();
       
-      // Lower scaling to ensure compressed files are smaller
       const scale = 0.5 + (qualityPercent / 100) * 1.0; 
       const jpegQuality = 0.1 + (qualityPercent / 100) * 0.7;
 
@@ -136,9 +137,8 @@ export default function App() {
       }
       
       const savedBytes = await newPdf.save({ useObjectStreams: false }); 
-      
-      if (savedBytes.length >= doc.size) {
-        alert("Compression stopped: The original PDF is highly optimized text. Converting it to compressed images increases the file size. Kept original.");
+       if (savedBytes.length >= doc.size) {
+        showToast("Compression stopped: The original PDF is highly optimized text. Kept original.", "info");
         return;
       }
       
@@ -155,18 +155,17 @@ export default function App() {
       
       await saveLocalDocument(compressedDoc);
       setRefreshKey(k => k + 1);
-      alert(`Compressed version created: "${compressedDoc.name}" (${(compressedDoc.size / 1024 / 1024).toFixed(2)} MB)`);
+      showToast(`Compressed version created: "${compressedDoc.name}" (${(compressedDoc.size / 1024 / 1024).toFixed(2)} MB)`, "success");
     } catch (e) {
       console.error(e);
-      alert("Failed to compress PDF: " + (e instanceof Error ? e.message : String(e)));
+      showToast("Failed to compress PDF: " + (e instanceof Error ? e.message : String(e)), "error");
     } finally {
       setIsCompressing(false);
     }
   };
 
   return (
-    <ThemeProvider>
-    <SettingsProvider>
+    <>
       {!isMounted ? <div className="h-screen w-full bg-white dark:bg-gray-900 sepia:bg-sepia-50" /> : <div className="h-screen w-full font-sans antialiased animate-in fade-in duration-500 bg-white dark:bg-gray-900 sepia:bg-sepia-50 text-gray-900 dark:text-gray-100 sepia:text-sepia-900 flex flex-col">
         {activeDoc ? (
           <PdfViewer doc={activeDoc} onClose={() => { setActiveDoc(null); setRefreshKey(prev => prev + 1); }} />
@@ -177,16 +176,6 @@ export default function App() {
             onCompressPDF={handleCompressPDF}
             
           />
-        )}
-        
-        {false && (
-          <div className="fixed bottom-4 right-4 bg-blue-600 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 animate-pulse">
-            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            Syncing documents...
-          </div>
         )}
         
         {isCompressing && (
@@ -200,6 +189,17 @@ export default function App() {
         )}
       </div>
       }
+    </>
+  );
+}
+
+export default function App() {
+  return (
+    <ThemeProvider>
+    <SettingsProvider>
+      <ToastProvider>
+        <AppContent />
+      </ToastProvider>
     </SettingsProvider>
     </ThemeProvider>
   );
