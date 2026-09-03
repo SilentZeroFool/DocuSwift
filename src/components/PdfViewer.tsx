@@ -4,7 +4,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { 
   ArrowLeft, ZoomIn, ZoomOut, Save, Download, Highlighter, PenTool, 
-  Eraser, Hand, Maximize2, Palette, RotateCcw, Check, ChevronLeft, ChevronRight, X, Layers
+  Eraser, Hand, Maximize2, Palette, RotateCcw, Check, ChevronLeft, ChevronRight, X, Layers, Search, Square, Circle, MousePointer2
 } from 'lucide-react';
 import { LocalDocument } from '../types';
 import { useToast } from './Toast';
@@ -13,6 +13,8 @@ import { PDFDocument, rgb, LineCapStyle, BlendMode } from 'pdf-lib';
 import { saveLocalDocument } from '../lib/idb';
 import { Capacitor } from '@capacitor/core';
 import { Share } from '@capacitor/share';
+import { registerPlugin } from '@capacitor/core';
+const JetpackPdf = registerPlugin<any>('JetpackPdf');
 import { Filesystem, Directory } from '@capacitor/filesystem';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -22,7 +24,7 @@ interface PdfViewerProps {
   onClose: () => void;
 }
 
-type Tool = 'pan' | 'highlight' | 'draw' | 'erase';
+type Tool = 'pan' | 'highlight' | 'draw' | 'erase' | 'arrow' | 'rectangle' | 'circle';
 
 interface AnnotationPoint {
   x: number; // Normalized to 0..1 relative to page width
@@ -31,15 +33,15 @@ interface AnnotationPoint {
 
 interface Annotation {
   id: string;
-  type: 'highlight' | 'draw';
+  type: 'highlight' | 'draw' | 'arrow' | 'rectangle' | 'circle';
   page: number;
   points: AnnotationPoint[];
   color: string;
   strokeWidth: number;
 }
 
-const HIGHLIGHT_COLORS = ['rgba(250, 204, 21, 0.45)', 'rgba(74, 222, 128, 0.45)', 'rgba(244, 114, 182, 0.45)', 'rgba(96, 165, 250, 0.45)'];
-const DRAW_COLORS = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#111827'];
+const HIGHLIGHT_COLORS = ['rgba(250, 204, 21, 0.45)', 'rgba(74, 222, 128, 0.45)', 'rgba(244, 114, 182, 0.45)', 'rgba(96, 165, 250, 0.45)', 'rgba(192, 132, 252, 0.45)', 'rgba(248, 113, 113, 0.45)'];
+const DRAW_COLORS = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#111827', '#8b5cf6', '#ec4899', '#ffffff'];
 
 export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   const { showToast } = useToast();
@@ -64,7 +66,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   const [strokeWidth, setStrokeWidth] = useState(3);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
-  const [currentPath, setCurrentPath] = useState<AnnotationPoint[]>([]);
+  const currentPathRef = useRef<AnnotationPoint[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -216,6 +218,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   const redrawAnnotations = useCallback((canvasWidth?: number, canvasHeight?: number) => {
     const canvas = drawCanvasRef.current;
     if (!canvas) return;
+    
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -224,66 +227,74 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
     ctx.clearRect(0, 0, width, height);
 
-    const pageAnns = annotations.filter(a => a.page === pageNum);
-
-    pageAnns.forEach(ann => {
-      if (ann.points.length < 2) return;
+    const drawShape = (ctx: CanvasRenderingContext2D, type: string, points: AnnotationPoint[], color: string, sw: number) => {
+      if (points.length < 2) return;
       ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(ann.points[0].x * width, ann.points[0].y * height);
+      const p1 = points[0];
+      const p2 = points[points.length - 1];
 
-      for (let i = 1; i < ann.points.length; i++) {
-        ctx.lineTo(ann.points[i].x * width, ann.points[i].y * height);
-      }
-
-      if (ann.type === 'highlight') {
-        ctx.strokeStyle = ann.color;
-        ctx.lineWidth = Math.max(16, (ann.strokeWidth || 20) * (width / 595));
+      if (type === 'highlight' || type === 'draw') {
+        ctx.beginPath();
+        ctx.moveTo(p1.x * width, p1.y * height);
+        for (let i = 1; i < points.length; i++) {
+          ctx.lineTo(points[i].x * width, points[i].y * height);
+        }
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(type === 'highlight' ? 16 : 2, sw * (width / 595));
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.globalCompositeOperation = 'multiply';
-      } else {
-        ctx.strokeStyle = ann.color;
-        ctx.lineWidth = Math.max(2, (ann.strokeWidth || 3) * (width / 595));
+        ctx.globalCompositeOperation = type === 'highlight' ? 'multiply' : 'source-over';
+        ctx.stroke();
+      } else if (type === 'arrow') {
+        const headlen = 15 * (width / 595); // length of head in pixels
+        const dx = (p2.x - p1.x) * width;
+        const dy = (p2.y - p1.y) * height;
+        const angle = Math.atan2(dy, dx);
+        ctx.beginPath();
+        ctx.moveTo(p1.x * width, p1.y * height);
+        ctx.lineTo(p2.x * width, p2.y * height);
+        ctx.lineTo(p2.x * width - headlen * Math.cos(angle - Math.PI / 6), p2.y * height - headlen * Math.sin(angle - Math.PI / 6));
+        ctx.moveTo(p2.x * width, p2.y * height);
+        ctx.lineTo(p2.x * width - headlen * Math.cos(angle + Math.PI / 6), p2.y * height - headlen * Math.sin(angle + Math.PI / 6));
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(2, sw * (width / 595));
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.globalCompositeOperation = 'source-over';
+        ctx.stroke();
+      } else if (type === 'rectangle') {
+        ctx.beginPath();
+        ctx.rect(p1.x * width, p1.y * height, (p2.x - p1.x) * width, (p2.y - p1.y) * height);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(2, sw * (width / 595));
+        ctx.stroke();
+      } else if (type === 'circle') {
+        ctx.beginPath();
+        const rx = Math.abs(p2.x - p1.x) * width / 2;
+        const ry = Math.abs(p2.y - p1.y) * height / 2;
+        const cx = Math.min(p1.x, p2.x) * width + rx;
+        const cy = Math.min(p1.y, p2.y) * height + ry;
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, 2 * Math.PI);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(2, sw * (width / 595));
+        ctx.stroke();
       }
-      ctx.stroke();
       ctx.restore();
+    };
+
+    const pageAnns = annotations.filter(a => a.page === pageNum);
+    pageAnns.forEach(ann => {
+      drawShape(ctx, ann.type, ann.points, ann.color, ann.strokeWidth || (ann.type === 'highlight' ? 20 : 3));
     });
 
-    // Draw active drawing path in real time
+    const currentPath = currentPathRef.current || [];
     if (currentPath.length > 1) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(currentPath[0].x * width, currentPath[0].y * height);
-
-      for (let i = 1; i < currentPath.length; i++) {
-        ctx.lineTo(currentPath[i].x * width, currentPath[i].y * height);
-      }
-
-      if (activeTool === 'highlight') {
-        ctx.strokeStyle = highlightColor;
-        ctx.lineWidth = Math.max(16, 20 * (width / 595));
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.globalCompositeOperation = 'multiply';
-      } else if (activeTool === 'draw') {
-        ctx.strokeStyle = drawColor;
-        ctx.lineWidth = Math.max(2, strokeWidth * (width / 595));
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.globalCompositeOperation = 'source-over';
-      }
-      ctx.stroke();
-      ctx.restore();
+      drawShape(ctx, activeTool, currentPath, activeTool === 'highlight' ? highlightColor : drawColor, activeTool === 'highlight' ? 20 : strokeWidth);
     }
-  }, [annotations, pageNum, currentPath, activeTool, highlightColor, drawColor, strokeWidth]);
+  }, [annotations, pageNum, activeTool, highlightColor, drawColor, strokeWidth]);
 
   useEffect(() => {
     redrawAnnotations();
-  }, [currentPath, annotations, redrawAnnotations]);
+  }, [annotations, redrawAnnotations]);
 
   // 5. Pointer / Drawing Handlers
   const getNormalizedPoint = (e: React.PointerEvent<HTMLCanvasElement>): AnnotationPoint | null => {
@@ -300,12 +311,10 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (activeTool === 'pan') return;
-
     const pt = getNormalizedPoint(e);
     if (!pt) return;
 
     if (activeTool === 'erase') {
-      // Erase any annotation that has points within threshold
       const newAnns = annotations.filter(ann => {
         if (ann.page !== pageNum) return true;
         const hit = ann.points.some(p => Math.hypot(p.x - pt.x, p.y - pt.y) < 0.04);
@@ -319,7 +328,8 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
     }
 
     setIsDrawing(true);
-    setCurrentPath([pt]);
+    currentPathRef.current = [pt];
+    redrawAnnotations();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   };
 
@@ -327,8 +337,9 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
     if (!isDrawing) return;
     const pt = getNormalizedPoint(e);
     if (!pt) return;
-
-    setCurrentPath(prev => [...prev, pt]);
+    currentPathRef.current.push(pt);
+    // Draw without triggering React render
+    redrawAnnotations();
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -338,19 +349,21 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
       (e.target as HTMLElement).releasePointerCapture(e.pointerId);
     } catch {}
 
-    if (currentPath.length > 1) {
+    const path = currentPathRef.current;
+    if (path.length > 1) {
       const newAnn: Annotation = {
         id: crypto.randomUUID(),
-        type: activeTool === 'highlight' ? 'highlight' : 'draw',
+        type: activeTool as any,
         page: pageNum,
-        points: currentPath,
+        points: [...path],
         color: activeTool === 'highlight' ? highlightColor : drawColor,
         strokeWidth: activeTool === 'highlight' ? 20 : strokeWidth
       };
       setAnnotations(prev => [...prev, newAnn]);
       setHasUnsavedChanges(true);
     }
-    setCurrentPath([]);
+    currentPathRef.current = [];
+    redrawAnnotations();
   };
 
   const lastTapRef = useRef<{ time: number, x: number, y: number } | null>(null);
@@ -382,18 +395,18 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         const rect = container.getBoundingClientRect();
         const pinchCenterX = (touch1.clientX + touch2.clientX) / 2 - rect.left;
         const pinchCenterY = (touch1.clientY + touch2.clientY) / 2 - rect.top;
-
         const contentX = pinchCenterX + container.scrollLeft;
         const contentY = pinchCenterY + container.scrollTop;
-
         const zoomRatio = nextZoom / userZoom;
         
-        flushSync(() => {
-          setUserZoom(nextZoom);
-        });
+        setUserZoom(nextZoom);
 
-        container.scrollLeft = contentX * zoomRatio - pinchCenterX;
-        container.scrollTop = contentY * zoomRatio - pinchCenterY;
+        requestAnimationFrame(() => {
+          if (containerRef.current) {
+            containerRef.current.scrollLeft = contentX * zoomRatio - pinchCenterX;
+            containerRef.current.scrollTop = contentY * zoomRatio - pinchCenterY;
+          }
+        });
       } else {
         setUserZoom(nextZoom);
       }
@@ -506,6 +519,8 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
           if (ann.color.includes('250, 204, 21')) { r = 0.98; g = 0.8; b = 0.08; } // yellow
           else if (ann.color.includes('74, 222, 128')) { r = 0.29; g = 0.87; b = 0.5; } // green
           else if (ann.color.includes('244, 114, 182')) { r = 0.95; g = 0.44; b = 0.71; } // pink
+          else if (ann.color.includes('192, 132, 252')) { r = 0.75; g = 0.52; b = 0.98; } // purple
+          else if (ann.color.includes('248, 113, 113')) { r = 0.97; g = 0.44; b = 0.44; } // red
           else { r = 0.38; g = 0.65; b = 0.98; } // blue
         } else {
           // Hex color
@@ -513,6 +528,9 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
           else if (ann.color === '#3b82f6') { r = 0.23; g = 0.51; b = 0.96; }
           else if (ann.color === '#10b981') { r = 0.06; g = 0.72; b = 0.51; }
           else if (ann.color === '#f59e0b') { r = 0.96; g = 0.62; b = 0.04; }
+          else if (ann.color === '#8b5cf6') { r = 0.54; g = 0.36; b = 0.96; }
+          else if (ann.color === '#ec4899') { r = 0.92; g = 0.28; b = 0.6; }
+          else if (ann.color === '#ffffff') { r = 1.0; g = 1.0; b = 1.0; }
           else { r = 0.1; g = 0.1; b = 0.1; }
         }
 
@@ -546,10 +564,56 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         // (scale(1, -1)) with the path anchored at (0, 0) by default, so
         // feeding it (rawX, -rawY) lands the point at (rawX, rawY) in raw
         // content space - exactly the target computed above.
-        const pathData = ann.points.map((p, i) => {
-          const raw = toRawPoint(p.x, p.y);
-          return `${i === 0 ? 'M' : 'L'} ${raw.x} ${raw.y}`;
-        }).join(' ');
+        let pathData = '';
+        if (ann.type === 'rectangle') {
+            const p1 = ann.points[0];
+            const p2 = ann.points[ann.points.length - 1];
+            const v1 = toRawPoint(p1.x, p1.y);
+            const v2 = toRawPoint(p2.x, p1.y);
+            const v3 = toRawPoint(p2.x, p2.y);
+            const v4 = toRawPoint(p1.x, p2.y);
+            pathData = `M ${v1.x} ${v1.y} L ${v2.x} ${v2.y} L ${v3.x} ${v3.y} L ${v4.x} ${v4.y} Z`;
+        } else if (ann.type === 'circle') {
+            const points = [];
+            for (let i = 0; i <= 32; i++) {
+                const theta = (i / 32) * Math.PI * 2;
+                const p1 = ann.points[0];
+                const p2 = ann.points[ann.points.length - 1];
+                const cx = (p1.x + p2.x) / 2;
+                const cy = (p1.y + p2.y) / 2;
+                const rx = Math.abs(p2.x - p1.x) / 2;
+                const ry = Math.abs(p2.y - p1.y) / 2;
+                const nx = cx + rx * Math.cos(theta);
+                const ny = cy + ry * Math.sin(theta);
+                points.push(toRawPoint(nx, ny));
+            }
+            pathData = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+        } else if (ann.type === 'arrow') {
+             const p1 = ann.points[0];
+             const p2 = ann.points[ann.points.length - 1];
+             const dx = p2.x - p1.x;
+             // account for page aspect ratio when calculating angle so arrow head isn't skewed!
+             // but drawing happens in normalized space for the vector, then transformed.
+             // Actually it's easier to just calculate the angle in normalized space * aspect ratio:
+             const angle = Math.atan2((p2.y - p1.y) * pHeight, (p2.x - p1.x) * pWidth);
+             const headlen = 15; // raw pixels
+             
+             const v1 = toRawPoint(p1.x, p1.y);
+             const v2 = toRawPoint(p2.x, p2.y);
+             
+             // The arrow head must be computed in raw space to be perfectly unskewed
+             const h1x = v2.x - headlen * Math.cos(angle - Math.PI / 6);
+             const h1y = v2.y - headlen * Math.sin(angle - Math.PI / 6);
+             const h2x = v2.x - headlen * Math.cos(angle + Math.PI / 6);
+             const h2y = v2.y - headlen * Math.sin(angle + Math.PI / 6);
+             
+             pathData = `M ${v1.x} ${v1.y} L ${v2.x} ${v2.y} L ${h1x} ${h1y} M ${v2.x} ${v2.y} L ${h2x} ${h2y}`;
+        } else {
+             pathData = ann.points.map((p, i) => {
+               const raw = toRawPoint(p.x, p.y);
+               return `${i === 0 ? 'M' : 'L'} ${raw.x} ${raw.y}`;
+             }).join(' ');
+        }
 
         // Do NOT use color: undefined as it fails in some environments. 
         // We use borderOpacity for the stroke transparency, and BlendMode for highlighters.
@@ -724,6 +788,19 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
             </button>
           )}
 
+                    <button 
+            onClick={() => {
+              if (JetpackPdf) {
+                 JetpackPdf.setTextSearchActive({ active: true }).catch((e: any) => showToast("Native Search not supported on this device", "info"));
+              } else {
+                 showToast("Search plugin not loaded", "error");
+              }
+            }}
+            className="w-10 h-10 flex items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-800 sepia:hover:bg-sepia-100 rounded-xl transition-colors text-gray-600 dark:text-gray-300 active:scale-95"
+            title="Search"
+          >
+            <Search className="w-5 h-5" />
+          </button>
           {/* Download Button */}
           <button 
             onClick={handleDownload}
@@ -763,7 +840,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
             <span className="hidden sm:inline">Highlight</span>
           </button>
 
-          <button 
+                    <button 
             onClick={() => setActiveTool('draw')} 
             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
               activeTool === 'draw' 
@@ -773,6 +850,42 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
           >
             <PenTool className="w-4 h-4" />
             <span className="hidden sm:inline">Draw</span>
+          </button>
+          
+          <button 
+            onClick={() => setActiveTool('arrow')} 
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+              activeTool === 'arrow' 
+                ? 'bg-purple-500 text-white shadow-xs' 
+                : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+          >
+            <MousePointer2 className="w-4 h-4" />
+            <span className="hidden sm:inline">Arrow</span>
+          </button>
+
+          <button 
+            onClick={() => setActiveTool('rectangle')} 
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+              activeTool === 'rectangle' 
+                ? 'bg-emerald-500 text-white shadow-xs' 
+                : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+          >
+            <Square className="w-4 h-4" />
+            <span className="hidden sm:inline">Rect</span>
+          </button>
+
+          <button 
+            onClick={() => setActiveTool('circle')} 
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+              activeTool === 'circle' 
+                ? 'bg-pink-500 text-white shadow-xs' 
+                : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+          >
+            <Circle className="w-4 h-4" />
+            <span className="hidden sm:inline">Circle</span>
           </button>
 
           <button 
@@ -789,7 +902,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         </div>
 
         {/* Color / Options Sub-panel Button */}
-        {(activeTool === 'draw' || activeTool === 'highlight') && (
+        {(activeTool !== 'pan' && activeTool !== 'erase') && (
           <div className="relative">
             <button 
               onClick={() => setShowColorPicker(!showColorPicker)}
@@ -820,7 +933,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
                           className="w-7 h-7 rounded-full border border-black/10 flex items-center justify-center transition-transform active:scale-90"
                           style={{ backgroundColor: c.replace('0.45', '1') }}
                         >
-                          {((activeTool === 'highlight' && highlightColor === c) || (activeTool === 'draw' && drawColor === c)) && (
+                          {((activeTool === 'highlight' && highlightColor === c) || (activeTool !== 'highlight' && drawColor === c)) && (
                             <Check className="w-3.5 h-3.5 text-white stroke-[3] drop-shadow-xs" />
                           )}
                         </button>
@@ -828,7 +941,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
                     </div>
                   </div>
 
-                  {activeTool === 'draw' && (
+                  {(activeTool !== 'highlight' && activeTool !== 'erase' && activeTool !== 'pan') && (
                     <div>
                       <div className="text-[11px] font-semibold text-gray-500 mb-1.5">Pen Thickness</div>
                       <div className="flex items-center gap-2">
