@@ -32,6 +32,7 @@ repositories {
 }
 
 dependencies {
+    implementation 'androidx.pdf:pdf-viewer-fragment:1.0.0-beta01'
     
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"

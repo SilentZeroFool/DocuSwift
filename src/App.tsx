@@ -13,8 +13,9 @@ import { PDFDocument } from 'pdf-lib';
 import { saveLocalDocument } from './lib/idb';
 import { App as CapApp } from '@capacitor/app';
 
-import { Filesystem } from '@capacitor/filesystem';
-import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Capacitor, registerPlugin } from '@capacitor/core';
+const JetpackPdf = registerPlugin('JetpackPdf');
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 
