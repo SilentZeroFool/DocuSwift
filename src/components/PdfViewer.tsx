@@ -1,21 +1,21 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { flushSync } from 'react-dom';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { 
   ArrowLeft, ZoomIn, ZoomOut, Save, Download, Highlighter, PenTool, 
-  Eraser, Hand, Maximize2, Palette, RotateCcw, Check, ChevronLeft, ChevronRight, X, Layers, Search, Square, Circle, MousePointer2
+  Eraser, Hand, Palette, RotateCcw, Check, ChevronLeft, ChevronRight, X, Search, Square, Circle, MousePointer2,
+  ChevronUp, ChevronDown, Loader2
 } from 'lucide-react';
 import { LocalDocument } from '../types';
 import { useToast } from './Toast';
 import { useSettings } from './SettingsContext';
-import { PDFDocument, rgb, LineCapStyle, BlendMode } from 'pdf-lib';
+import { PDFDocument, rgb, BlendMode } from 'pdf-lib';
 import { saveLocalDocument } from '../lib/idb';
-import { Capacitor } from '@capacitor/core';
 import { Share } from '@capacitor/share';
-import { registerPlugin } from '@capacitor/core';
-const JetpackPdf = registerPlugin<any>('JetpackPdf');
 import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Capacitor, registerPlugin } from '@capacitor/core';
+
+const JetpackPdf = registerPlugin<any>('JetpackPdf');
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -40,8 +40,40 @@ interface Annotation {
   strokeWidth: number;
 }
 
-const HIGHLIGHT_COLORS = ['rgba(250, 204, 21, 0.45)', 'rgba(74, 222, 128, 0.45)', 'rgba(244, 114, 182, 0.45)', 'rgba(96, 165, 250, 0.45)', 'rgba(192, 132, 252, 0.45)', 'rgba(248, 113, 113, 0.45)'];
-const DRAW_COLORS = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#111827', '#8b5cf6', '#ec4899', '#ffffff'];
+interface SearchMatch {
+  id: string;
+  pageNum: number;
+  textSnippet: string;
+  rects: { x: number; y: number; width: number; height: number }[];
+}
+
+const HIGHLIGHT_COLORS = [
+  'rgba(250, 204, 21, 0.45)', // yellow
+  'rgba(74, 222, 128, 0.45)',  // green
+  'rgba(96, 165, 250, 0.45)',  // blue
+  'rgba(244, 114, 182, 0.45)', // pink
+  'rgba(192, 132, 252, 0.45)', // purple
+  'rgba(248, 113, 113, 0.45)', // red
+  'rgba(251, 146, 60, 0.45)',  // orange
+  'rgba(45, 212, 191, 0.45)',  // teal
+  'rgba(163, 230, 53, 0.45)',  // lime
+  'rgba(148, 163, 184, 0.45)', // slate
+];
+
+const DRAW_COLORS = [
+  '#ef4444', // red
+  '#f97316', // orange
+  '#f59e0b', // amber
+  '#10b981', // emerald
+  '#06b6d4', // cyan
+  '#3b82f6', // blue
+  '#6366f1', // indigo
+  '#8b5cf6', // purple
+  '#ec4899', // pink
+  '#111827', // dark
+  '#6b7280', // gray
+  '#ffffff', // white
+];
 
 export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   const { showToast } = useToast();
@@ -50,11 +82,33 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   const [totalPages, setTotalPages] = useState(1);
   const [pageSize, setPageSize] = useState<{ width: number; height: number }>({ width: 595, height: 842 });
   
-  // Zoom & Scale
+  // Settings
   const { settings } = useSettings();
-  const [userZoom, setUserZoom] = useState(1.0); // CSS scale (instant)
-  const [isPinching, setIsPinching] = useState(false);
-  const renderZoom = 2.0; // Fixed high-res PDF rendering scale
+
+  // Hardware-Accelerated Pan & Zoom State
+  const [userZoom, setUserZoom] = useState(1.0);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const zoomRef = useRef(1.0);
+  const panRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const stageRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const animFrameRef = useRef<number | null>(null);
+
+  // Gesture tracking refs
+  const isPinchingRef = useRef(false);
+  const isPanningRef = useRef(false);
+  const pinchStartDistRef = useRef(1);
+  const pinchStartZoomRef = useRef(1.0);
+  const pinchStartPanRef = useRef({ x: 0, y: 0 });
+  const pinchContentFocusRef = useRef({ x: 0, y: 0 });
+  const panStartTouchRef = useRef({ x: 0, y: 0 });
+  const panStartOffsetRef = useRef({ x: 0, y: 0 });
+  const isMouseDownRef = useRef(false);
+  const mouseStartRef = useRef({ x: 0, y: 0 });
+  const mousePanStartRef = useRef({ x: 0, y: 0 });
+  const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
+
+  const renderZoom = 2.0; // High-res PDF rendering multiplier for retina clarity
   const [fitScale, setFitScale] = useState(1.0);
   const [isPageChanging, setIsPageChanging] = useState(false);
   const currentPdfDataRef = useRef<ArrayBuffer>(doc.data);
@@ -67,6 +121,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const currentPathRef = useRef<AnnotationPoint[]>([]);
+  const isDrawingRef = useRef(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -74,14 +129,92 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   const [isJumpModalOpen, setIsJumpModalOpen] = useState(false);
   const [jumpPageInput, setJumpPageInput] = useState('1');
 
-  // DOM Refs
+  // In-App Document Search State
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchMatch[]>([]);
+  const [activeMatchIndex, setActiveMatchIndex] = useState(-1);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // DOM Canvas Refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawCanvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
 
-  // Multi-touch tracking for pinch-to-zoom
-  const touchDistanceRef = useRef<number | null>(null);
-  const touchStartZoomRef = useRef<number>(1.0);
+  // Smooth ease-out animation helper
+  const animateTo = useCallback((targetZoom: number, targetPan: { x: number; y: number }, customDuration?: number) => {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+
+    const startZoom = zoomRef.current;
+    const startPan = { ...panRef.current };
+    const duration = customDuration !== undefined ? customDuration : (settings.animationDuration ?? 200);
+
+    if (duration <= 10) {
+      zoomRef.current = targetZoom;
+      panRef.current = { ...targetPan };
+      setUserZoom(targetZoom);
+      setPan({ ...targetPan });
+      if (stageRef.current) {
+        stageRef.current.style.transform = `translate3d(${targetPan.x}px, ${targetPan.y}px, 0) scale(${targetZoom})`;
+      }
+      return;
+    }
+
+    const startTime = performance.now();
+
+    const step = (now: number) => {
+      let progress = (now - startTime) / duration;
+      if (progress > 1) progress = 1;
+      // Cubic ease-out
+      const ease = 1 - Math.pow(1 - progress, 3);
+
+      const curZoom = startZoom + (targetZoom - startZoom) * ease;
+      const curPanX = startPan.x + (targetPan.x - startPan.x) * ease;
+      const curPanY = startPan.y + (targetPan.y - startPan.y) * ease;
+
+      zoomRef.current = curZoom;
+      panRef.current = { x: curPanX, y: curPanY };
+
+      if (stageRef.current) {
+        stageRef.current.style.transform = `translate3d(${curPanX}px, ${curPanY}px, 0) scale(${curZoom})`;
+      }
+
+      if (progress < 1) {
+        animFrameRef.current = requestAnimationFrame(step);
+      } else {
+        setUserZoom(targetZoom);
+        setPan({ ...targetPan });
+        animFrameRef.current = null;
+      }
+    };
+
+    animFrameRef.current = requestAnimationFrame(step);
+  }, [settings.animationDuration]);
+
+  // Center page helper
+  const centerPage = useCallback((fit: number, pSize: { width: number; height: number }, resetZoom = false) => {
+    if (!containerRef.current || pSize.width <= 0) return;
+    const cw = containerRef.current.clientWidth;
+    const ch = containerRef.current.clientHeight;
+    const targetZoom = resetZoom ? 1.0 : zoomRef.current;
+    const pw = pSize.width * fit * targetZoom;
+    const ph = pSize.height * fit * targetZoom;
+
+    const initX = Math.max(0, (cw - pw) / 2);
+    const initY = Math.max(16, (ch - ph) / 2);
+
+    panRef.current = { x: initX, y: initY };
+    zoomRef.current = targetZoom;
+    setPan({ x: initX, y: initY });
+    setUserZoom(targetZoom);
+
+    if (stageRef.current) {
+      stageRef.current.style.transform = `translate3d(${initX}px, ${initY}px, 0) scale(${targetZoom})`;
+    }
+  }, []);
 
   // 1. Load PDF Document
   useEffect(() => {
@@ -116,10 +249,9 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   const calculateFitScale = useCallback((pageWidth: number) => {
     if (!containerRef.current || pageWidth <= 0) return 1.0;
     const containerWidth = containerRef.current.clientWidth;
-    // Leave horizontal margin (16px on mobile, 32px on desktop)
+    // Leave safe horizontal margins
     const availableWidth = Math.max(containerWidth - 24, 280);
-    const calculated = availableWidth / pageWidth;
-    return calculated;
+    return availableWidth / pageWidth;
   }, []);
 
   // Update scale on window/container resize
@@ -128,12 +260,13 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
       if (pageSize.width > 0) {
         const fit = calculateFitScale(pageSize.width);
         setFitScale(fit);
+        centerPage(fit, pageSize);
       }
     };
 
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [pageSize.width, calculateFitScale]);
+  }, [pageSize, calculateFitScale, centerPage]);
 
   // 3. Render PDF Page to Background Canvas
   const lastRenderedPageRef = useRef<number>(0);
@@ -154,7 +287,8 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
         // Base page size
         const baseViewport = page.getViewport({ scale: 1.0 });
-        setPageSize({ width: baseViewport.width, height: baseViewport.height });
+        const newPageSize = { width: baseViewport.width, height: baseViewport.height };
+        setPageSize(newPageSize);
 
         const calculatedFit = calculateFitScale(baseViewport.width);
         setFitScale(calculatedFit);
@@ -170,20 +304,16 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         const context = canvas.getContext('2d', { alpha: false });
         if (!context) return;
 
-        // Actual pixel resolution
+        // High-res pixel buffers
         canvas.width = Math.floor(viewport.width);
         canvas.height = Math.floor(viewport.height);
         drawCanvas.width = Math.floor(viewport.width);
         drawCanvas.height = Math.floor(viewport.height);
 
-        // Display CSS resolution
-        const displayWidth = Math.floor(baseViewport.width * currentScale);
-        const displayHeight = Math.floor(baseViewport.height * currentScale);
-
-        canvas.style.width = `${displayWidth}px`;
-        canvas.style.height = `${displayHeight}px`;
-        drawCanvas.style.width = `${displayWidth}px`;
-        drawCanvas.style.height = `${displayHeight}px`;
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+        drawCanvas.style.width = '100%';
+        drawCanvas.style.height = '100%';
 
         const renderContext = {
           canvasContext: context,
@@ -196,6 +326,13 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
         redrawAnnotations(viewport.width, viewport.height);
         setIsPageChanging(false);
+
+        // If page changed, center view smoothly
+        if (lastRenderedPageRef.current !== 0 && lastRenderedPageRef.current !== pageNum) {
+          centerPage(calculatedFit, newPageSize);
+        } else if (lastRenderedPageRef.current === 0) {
+          centerPage(calculatedFit, newPageSize, true);
+        }
         lastRenderedPageRef.current = pageNum;
       } catch (e) {
         if (!(e instanceof pdfjsLib.RenderingCancelledException)) {
@@ -212,7 +349,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         renderTask.cancel();
       }
     };
-  }, [pdf, pageNum, renderZoom, fitScale, calculateFitScale]);
+  }, [pdf, pageNum, renderZoom, calculateFitScale, centerPage]);
 
   // 4. Redraw Annotations on Overlay Canvas
   const redrawAnnotations = useCallback((canvasWidth?: number, canvasHeight?: number) => {
@@ -301,6 +438,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
     const canvas = drawCanvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
     const x = (e.clientX - rect.left) / rect.width;
     const y = (e.clientY - rect.top) / rect.height;
     return {
@@ -327,23 +465,26 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
       return;
     }
 
+    isDrawingRef.current = true;
     setIsDrawing(true);
     currentPathRef.current = [pt];
     redrawAnnotations();
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    try {
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {}
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
+    if (!isDrawingRef.current) return;
     const pt = getNormalizedPoint(e);
     if (!pt) return;
     currentPathRef.current.push(pt);
-    // Draw without triggering React render
     redrawAnnotations();
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
+    if (!isDrawingRef.current) return;
+    isDrawingRef.current = false;
     setIsDrawing(false);
     try {
       (e.target as HTMLElement).releasePointerCapture(e.pointerId);
@@ -366,119 +507,420 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
     redrawAnnotations();
   };
 
-  const lastTapRef = useRef<{ time: number, x: number, y: number } | null>(null);
+  // Clamp viewport bounds smoothly
+  const clampPanBounds = useCallback(() => {
+    if (!containerRef.current) return;
+    const cw = containerRef.current.clientWidth;
+    const ch = containerRef.current.clientHeight;
+    const pw = pageSize.width * fitScale * zoomRef.current;
+    const ph = pageSize.height * fitScale * zoomRef.current;
 
-  // 6. Touch Gestures (Pinch to Zoom & Double Tap)
+    const curX = panRef.current.x;
+    const curY = panRef.current.y;
+    let clampedX = curX;
+    let clampedY = curY;
+
+    if (pw <= cw) {
+      clampedX = (cw - pw) / 2;
+    } else {
+      const minX = cw - pw - 48;
+      const maxX = 48;
+      clampedX = Math.min(maxX, Math.max(minX, curX));
+    }
+
+    if (ph <= ch) {
+      clampedY = Math.max(16, (ch - ph) / 2);
+    } else {
+      const minY = ch - ph - 48;
+      const maxY = 48;
+      clampedY = Math.min(maxY, Math.max(minY, curY));
+    }
+
+    if (Math.abs(clampedX - curX) > 1 || Math.abs(clampedY - curY) > 1) {
+      animateTo(zoomRef.current, { x: clampedX, y: clampedY }, 150);
+    }
+  }, [pageSize, fitScale, animateTo]);
+
+  // 6. Touch Gestures (Pinch to Zoom, Panning & Double Tap)
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 2) {
-      setIsPinching(true);
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      touchDistanceRef.current = Math.hypot(dx, dy);
-      touchStartZoomRef.current = userZoom;
+      // Pinch gesture
+      isPinchingRef.current = true;
+      isPanningRef.current = false;
+
+      // Cancel ongoing stroke if user placed second finger
+      if (isDrawingRef.current) {
+        isDrawingRef.current = false;
+        setIsDrawing(false);
+        currentPathRef.current = [];
+        redrawAnnotations();
+      }
+
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const rect = containerRef.current?.getBoundingClientRect() || { left: 0, top: 0 };
+
+      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      pinchStartDistRef.current = Math.max(dist, 1);
+      pinchStartZoomRef.current = zoomRef.current;
+      pinchStartPanRef.current = { ...panRef.current };
+
+      const midX = (t1.clientX + t2.clientX) / 2 - rect.left;
+      const midY = (t1.clientY + t2.clientY) / 2 - rect.top;
+
+      // Focal point in content coordinates
+      pinchContentFocusRef.current = {
+        x: (midX - panRef.current.x) / zoomRef.current,
+        y: (midY - panRef.current.y) / zoomRef.current,
+      };
+    } else if (e.touches.length === 1 && activeTool === 'pan') {
+      // 1-finger pan in Pan tool
+      isPanningRef.current = true;
+      const t = e.touches[0];
+      panStartTouchRef.current = { x: t.clientX, y: t.clientY };
+      panStartOffsetRef.current = { ...panRef.current };
     }
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    if (e.touches.length === 2 && touchDistanceRef.current !== null) {
-      const touch1 = e.touches[0];
-      const touch2 = e.touches[1];
-      const dx = touch1.clientX - touch2.clientX;
-      const dy = touch1.clientY - touch2.clientY;
-      const dist = Math.hypot(dx, dy);
-      const ratio = dist / touchDistanceRef.current;
-      
-      const nextZoom = Math.min(Math.max(0.6, userZoom * ratio), 4.0);
-      
-      const container = containerRef.current;
-      if (container && nextZoom !== userZoom) {
-        const rect = container.getBoundingClientRect();
-        const pinchCenterX = (touch1.clientX + touch2.clientX) / 2 - rect.left;
-        const pinchCenterY = (touch1.clientY + touch2.clientY) / 2 - rect.top;
-        const contentX = pinchCenterX + container.scrollLeft;
-        const contentY = pinchCenterY + container.scrollTop;
-        const zoomRatio = nextZoom / userZoom;
-        
-        setUserZoom(nextZoom);
+    if (e.touches.length === 2 && isPinchingRef.current) {
+      if (e.cancelable) e.preventDefault();
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const rect = containerRef.current?.getBoundingClientRect() || { left: 0, top: 0 };
 
-        requestAnimationFrame(() => {
-          if (containerRef.current) {
-            containerRef.current.scrollLeft = contentX * zoomRatio - pinchCenterX;
-            containerRef.current.scrollTop = contentY * zoomRatio - pinchCenterY;
-          }
-        });
-      } else {
-        setUserZoom(nextZoom);
+      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      const distRatio = dist / pinchStartDistRef.current;
+
+      const sensitivity = settings.zoomSensitivity || 1.0;
+      const effectiveRatio = 1 + (distRatio - 1) * sensitivity;
+      const newZoom = Math.min(Math.max(0.5, pinchStartZoomRef.current * effectiveRatio), 5.0);
+
+      const curMidX = (t1.clientX + t2.clientX) / 2 - rect.left;
+      const curMidY = (t1.clientY + t2.clientY) / 2 - rect.top;
+
+      const focus = pinchContentFocusRef.current;
+      const newPanX = curMidX - focus.x * newZoom;
+      const newPanY = curMidY - focus.y * newZoom;
+
+      panRef.current = { x: newPanX, y: newPanY };
+      zoomRef.current = newZoom;
+
+      if (stageRef.current) {
+        stageRef.current.style.transform = `translate3d(${newPanX}px, ${newPanY}px, 0) scale(${newZoom})`;
       }
-      
-      touchDistanceRef.current = dist;
+    } else if (e.touches.length === 1 && isPanningRef.current && activeTool === 'pan') {
+      if (e.cancelable) e.preventDefault();
+      const t = e.touches[0];
+      const speed = settings.panningSpeed || 1.0;
+      const dx = (t.clientX - panStartTouchRef.current.x) * speed;
+      const dy = (t.clientY - panStartTouchRef.current.y) * speed;
+
+      const newPanX = panStartOffsetRef.current.x + dx;
+      const newPanY = panStartOffsetRef.current.y + dy;
+
+      panRef.current = { x: newPanX, y: newPanY };
+
+      if (stageRef.current) {
+        stageRef.current.style.transform = `translate3d(${newPanX}px, ${newPanY}px, 0) scale(${zoomRef.current})`;
+      }
     }
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
-    if (e.touches.length < 2) {
-      setIsPinching(false);
+    if (isPinchingRef.current && e.touches.length < 2) {
+      isPinchingRef.current = false;
+      setUserZoom(zoomRef.current);
+      setPan({ ...panRef.current });
+      clampPanBounds();
     }
-    touchDistanceRef.current = null;
-    
-    // Detect double tap
+
+    if (isPanningRef.current && e.touches.length === 0) {
+      isPanningRef.current = false;
+      setPan({ ...panRef.current });
+      clampPanBounds();
+    }
+
+    // Double tap handling
     if (e.changedTouches.length === 1) {
       const touch = e.changedTouches[0];
       const now = Date.now();
       const last = lastTapRef.current;
-      
-      if (last && now - last.time < 300) {
-        // Double tap!
-        const dx = touch.clientX - last.x;
-        const dy = touch.clientY - last.y;
-        if (Math.hypot(dx, dy) < 30) {
-          const container = containerRef.current;
-          if (container) {
-            const rect = container.getBoundingClientRect();
-            const tapX = touch.clientX - rect.left;
-            const tapY = touch.clientY - rect.top;
-            
-            const contentX = tapX + container.scrollLeft;
-            const contentY = tapY + container.scrollTop;
+      const doubleTapSpeed = settings.doubleTapSpeed || 300;
 
-            const targetZoom = userZoom > 1.1 ? 1.0 : 1.5;
-            const startZoom = userZoom;
-            const startScrollLeft = container.scrollLeft;
-            const startScrollTop = container.scrollTop;
-            
-            const targetScrollLeft = contentX * (targetZoom / startZoom) - tapX;
-            const targetScrollTop = contentY * (targetZoom / startZoom) - tapY;
-            
-            setIsPinching(true); // Disable CSS transition
-            
-            const startTime = performance.now();
-            const duration = settings.animationDuration;
-            
-            const animate = (time) => {
-              let progress = (time - startTime) / duration;
-              if (progress > 1) progress = 1;
-              const ease = 1 - Math.pow(1 - progress, 3);
-              
-              const currentZoom = startZoom + (targetZoom - startZoom) * ease;
-              setUserZoom(currentZoom);
-              container.scrollLeft = startScrollLeft + (targetScrollLeft - startScrollLeft) * ease;
-              container.scrollTop = startScrollTop + (targetScrollTop - startScrollTop) * ease;
-              
-              if (progress < 1) {
-                requestAnimationFrame(animate);
-              } else {
-                setIsPinching(false);
-              }
-            };
-            requestAnimationFrame(animate);
-          }
-          lastTapRef.current = null;
-          return;
+      if (last && now - last.time < doubleTapSpeed && Math.hypot(touch.clientX - last.x, touch.clientY - last.y) < 32) {
+        const rect = containerRef.current?.getBoundingClientRect() || { left: 0, top: 0, width: 320, height: 480 };
+        const tapX = touch.clientX - rect.left;
+        const tapY = touch.clientY - rect.top;
+
+        if (zoomRef.current > 1.25) {
+          // Reset to 1.0 centered
+          const pw = pageSize.width * fitScale;
+          const ph = pageSize.height * fitScale;
+          const targetX = Math.max(0, (rect.width - pw) / 2);
+          const targetY = Math.max(16, (rect.height - ph) / 2);
+          animateTo(1.0, { x: targetX, y: targetY });
+        } else {
+          // Zoom to 2.2x centered on tap
+          const targetZoom = 2.2;
+          const focusX = (tapX - panRef.current.x) / zoomRef.current;
+          const focusY = (tapY - panRef.current.y) / zoomRef.current;
+          const targetPanX = tapX - focusX * targetZoom;
+          const targetPanY = tapY - focusY * targetZoom;
+          animateTo(targetZoom, { x: targetPanX, y: targetPanY });
         }
+        lastTapRef.current = null;
+        return;
       }
-      
       lastTapRef.current = { time: now, x: touch.clientX, y: touch.clientY };
     }
+  };
+
+  // Desktop Mouse / Trackpad Handlers
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const rect = containerRef.current?.getBoundingClientRect() || { left: 0, top: 0 };
+
+    if (e.ctrlKey) {
+      // Pinch or Ctrl+Wheel Zoom
+      const sensitivity = settings.zoomSensitivity || 1.0;
+      const zoomFactor = 1 - e.deltaY * 0.008 * sensitivity;
+      const newZoom = Math.min(Math.max(0.5, zoomRef.current * zoomFactor), 5.0);
+
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const focusX = (mouseX - panRef.current.x) / zoomRef.current;
+      const focusY = (mouseY - panRef.current.y) / zoomRef.current;
+
+      const newPanX = mouseX - focusX * newZoom;
+      const newPanY = mouseY - focusY * newZoom;
+
+      zoomRef.current = newZoom;
+      panRef.current = { x: newPanX, y: newPanY };
+      setUserZoom(newZoom);
+      setPan({ x: newPanX, y: newPanY });
+
+      if (stageRef.current) {
+        stageRef.current.style.transform = `translate3d(${newPanX}px, ${newPanY}px, 0) scale(${newZoom})`;
+      }
+    } else {
+      // Normal 2-finger scroll / mouse wheel
+      const speed = settings.panningSpeed || 1.0;
+      const newPanX = panRef.current.x - e.deltaX * speed;
+      const newPanY = panRef.current.y - e.deltaY * speed;
+
+      panRef.current = { x: newPanX, y: newPanY };
+      setPan({ x: newPanX, y: newPanY });
+
+      if (stageRef.current) {
+        stageRef.current.style.transform = `translate3d(${newPanX}px, ${newPanY}px, 0) scale(${zoomRef.current})`;
+      }
+    }
+  };
+
+  const handleContainerPointerDown = (e: React.PointerEvent) => {
+    if (activeTool !== 'pan' || e.pointerType === 'touch') return;
+    isMouseDownRef.current = true;
+    mouseStartRef.current = { x: e.clientX, y: e.clientY };
+    mousePanStartRef.current = { ...panRef.current };
+    try { (e.target as HTMLElement).setPointerCapture(e.pointerId); } catch {}
+  };
+
+  const handleContainerPointerMove = (e: React.PointerEvent) => {
+    if (!isMouseDownRef.current || activeTool !== 'pan' || e.pointerType === 'touch') return;
+    const speed = settings.panningSpeed || 1.0;
+    const dx = (e.clientX - mouseStartRef.current.x) * speed;
+    const dy = (e.clientY - mouseStartRef.current.y) * speed;
+    const newPan = {
+      x: mousePanStartRef.current.x + dx,
+      y: mousePanStartRef.current.y + dy,
+    };
+    panRef.current = newPan;
+    if (stageRef.current) {
+      stageRef.current.style.transform = `translate3d(${newPan.x}px, ${newPan.y}px, 0) scale(${zoomRef.current})`;
+    }
+  };
+
+  const handleContainerPointerUp = (e: React.PointerEvent) => {
+    if (!isMouseDownRef.current || e.pointerType === 'touch') return;
+    isMouseDownRef.current = false;
+    try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
+    setPan({ ...panRef.current });
+    clampPanBounds();
+  };
+
+  // Zoom Button Controls
+  const handleZoomIn = () => {
+    if (!containerRef.current) return;
+    const cw = containerRef.current.clientWidth;
+    const ch = containerRef.current.clientHeight;
+    const targetZoom = Math.min(5.0, zoomRef.current * 1.3);
+    const midX = cw / 2;
+    const midY = ch / 2;
+    const focusX = (midX - panRef.current.x) / zoomRef.current;
+    const focusY = (midY - panRef.current.y) / zoomRef.current;
+    const targetPanX = midX - focusX * targetZoom;
+    const targetPanY = midY - focusY * targetZoom;
+    animateTo(targetZoom, { x: targetPanX, y: targetPanY });
+  };
+
+  const handleZoomOut = () => {
+    if (!containerRef.current) return;
+    const cw = containerRef.current.clientWidth;
+    const ch = containerRef.current.clientHeight;
+    const targetZoom = Math.max(0.5, zoomRef.current / 1.3);
+    const midX = cw / 2;
+    const midY = ch / 2;
+    const focusX = (midX - panRef.current.x) / zoomRef.current;
+    const focusY = (midY - panRef.current.y) / zoomRef.current;
+    const targetPanX = midX - focusX * targetZoom;
+    const targetPanY = midY - focusY * targetZoom;
+    animateTo(targetZoom, { x: targetPanX, y: targetPanY });
+  };
+
+  const handleResetZoom = () => {
+    if (!containerRef.current) return;
+    const cw = containerRef.current.clientWidth;
+    const ch = containerRef.current.clientHeight;
+    const pw = pageSize.width * fitScale;
+    const ph = pageSize.height * fitScale;
+    const targetX = Math.max(0, (cw - pw) / 2);
+    const targetY = Math.max(16, (ch - ph) / 2);
+    animateTo(1.0, { x: targetX, y: targetY });
+  };
+
+  // In-App PDF Document Search Engine
+  const performSearch = useCallback(async (query: string) => {
+    if (!pdf || !query.trim()) {
+      setSearchResults([]);
+      setActiveMatchIndex(-1);
+      return;
+    }
+    const cleanQ = query.trim().toLowerCase();
+    setIsSearching(true);
+    const matches: SearchMatch[] = [];
+
+    try {
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const textContent = await page.getTextContent();
+        const viewport = page.getViewport({ scale: 1.0 });
+        const pageWidth = viewport.width;
+        const pageHeight = viewport.height;
+
+        for (const item of textContent.items as any[]) {
+          if (!item.str) continue;
+          const str = item.str;
+          const lowerStr = str.toLowerCase();
+          let startIndex = 0;
+
+          while ((startIndex = lowerStr.indexOf(cleanQ, startIndex)) !== -1) {
+            const tx = item.transform;
+            const x0 = tx[4];
+            const y0 = tx[5];
+            const itemWidth = item.width || 20;
+            const itemHeight = item.height || Math.abs(tx[3]) || 12;
+
+            const [vx1, vy1] = viewport.convertToViewportPoint(x0, y0);
+            const [vx2, vy2] = viewport.convertToViewportPoint(x0 + itemWidth, y0 + itemHeight);
+
+            const x = Math.min(vx1, vx2) / pageWidth;
+            const y = Math.min(vy1, vy2) / pageHeight;
+            const width = Math.max(0.015, Math.abs(vx1 - vx2) / pageWidth);
+            const height = Math.max(0.012, Math.abs(vy1 - vy2) / pageHeight);
+
+            matches.push({
+              id: `${p}-${matches.length}`,
+              pageNum: p,
+              textSnippet: str.slice(Math.max(0, startIndex - 10), Math.min(str.length, startIndex + cleanQ.length + 10)),
+              rects: [{ x, y, width, height }]
+            });
+
+            startIndex += cleanQ.length;
+          }
+        }
+      }
+
+      setSearchResults(matches);
+      if (matches.length > 0) {
+        const firstOnOrAfter = matches.findIndex(m => m.pageNum >= pageNum);
+        const idx = firstOnOrAfter !== -1 ? firstOnOrAfter : 0;
+        setActiveMatchIndex(idx);
+        if (matches[idx].pageNum !== pageNum) {
+          setPageNum(matches[idx].pageNum);
+        }
+      } else {
+        setActiveMatchIndex(-1);
+      }
+    } catch (err) {
+      console.error("Search error:", err);
+    } finally {
+      setIsSearching(false);
+    }
+  }, [pdf, pageNum]);
+
+  const handleNextMatch = () => {
+    if (searchResults.length === 0) return;
+    const nextIdx = (activeMatchIndex + 1) % searchResults.length;
+    setActiveMatchIndex(nextIdx);
+    const match = searchResults[nextIdx];
+    if (match.pageNum !== pageNum) {
+      setPageNum(match.pageNum);
+    }
+  };
+
+  const handlePrevMatch = () => {
+    if (searchResults.length === 0) return;
+    const prevIdx = (activeMatchIndex - 1 + searchResults.length) % searchResults.length;
+    setActiveMatchIndex(prevIdx);
+    const match = searchResults[prevIdx];
+    if (match.pageNum !== pageNum) {
+      setPageNum(match.pageNum);
+    }
+  };
+
+  // Keyboard shortcuts for search and navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setIsSearchOpen(true);
+        setTimeout(() => searchInputRef.current?.focus(), 50);
+      } else if (e.key === 'Escape') {
+        if (isSearchOpen) {
+          setIsSearchOpen(false);
+        } else if (showColorPicker) {
+          setShowColorPicker(false);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSearchOpen, showColorPicker]);
+
+  // Universal Color Parser for pdf-lib Export
+  const parseColorToRgb = (colorStr: string, isHighlight: boolean) => {
+    if (colorStr.startsWith('#')) {
+      const hex = colorStr.replace('#', '');
+      const num = parseInt(hex, 16);
+      return {
+        r: ((num >> 16) & 255) / 255,
+        g: ((num >> 8) & 255) / 255,
+        b: (num & 255) / 255,
+        alpha: 1.0,
+      };
+    }
+    const match = colorStr.match(/[\d.]+/g);
+    if (match && match.length >= 3) {
+      return {
+        r: parseFloat(match[0]) / 255,
+        g: parseFloat(match[1]) / 255,
+        b: parseFloat(match[2]) / 255,
+        alpha: match.length >= 4 ? parseFloat(match[3]) : (isHighlight ? 0.45 : 1.0),
+      };
+    }
+    return { r: 0.9, g: 0.2, b: 0.2, alpha: isHighlight ? 0.45 : 1.0 };
   };
 
   // 7. Save Annotations to Local IndexedDB & PDF Bytes
@@ -490,13 +932,11 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
     setIsSaving(true);
     try {
-      // Force it to an ArrayBuffer safely
       const buf = currentPdfDataRef.current;
       let arrayBuffer: ArrayBuffer;
       if (buf instanceof ArrayBuffer) {
         arrayBuffer = buf.slice(0);
       } else {
-        // Fallback if it somehow became a typed array or buffer
         arrayBuffer = new Uint8Array(buf as any).buffer;
       }
       let pdfDoc;
@@ -508,31 +948,11 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
       for (const ann of annotations) {
         if (ann.page > pdfDoc.getPageCount()) continue;
-        if (ann.points.length < 2) continue; // Skip single-point dots to prevent pdf-lib crash
+        if (ann.points.length < 2) continue;
         const page = pdfDoc.getPage(ann.page - 1);
         const { width: pWidth, height: pHeight } = page.getSize();
 
-        // Convert hex or rgba color to RGB components
-        let r = 0.9, g = 0.2, b = 0.2, alpha = 1.0;
-        if (ann.type === 'highlight') {
-          alpha = 0.45;
-          if (ann.color.includes('250, 204, 21')) { r = 0.98; g = 0.8; b = 0.08; } // yellow
-          else if (ann.color.includes('74, 222, 128')) { r = 0.29; g = 0.87; b = 0.5; } // green
-          else if (ann.color.includes('244, 114, 182')) { r = 0.95; g = 0.44; b = 0.71; } // pink
-          else if (ann.color.includes('192, 132, 252')) { r = 0.75; g = 0.52; b = 0.98; } // purple
-          else if (ann.color.includes('248, 113, 113')) { r = 0.97; g = 0.44; b = 0.44; } // red
-          else { r = 0.38; g = 0.65; b = 0.98; } // blue
-        } else {
-          // Hex color
-          if (ann.color === '#ef4444') { r = 0.93; g = 0.27; b = 0.27; }
-          else if (ann.color === '#3b82f6') { r = 0.23; g = 0.51; b = 0.96; }
-          else if (ann.color === '#10b981') { r = 0.06; g = 0.72; b = 0.51; }
-          else if (ann.color === '#f59e0b') { r = 0.96; g = 0.62; b = 0.04; }
-          else if (ann.color === '#8b5cf6') { r = 0.54; g = 0.36; b = 0.96; }
-          else if (ann.color === '#ec4899') { r = 0.92; g = 0.28; b = 0.6; }
-          else if (ann.color === '#ffffff') { r = 1.0; g = 1.0; b = 1.0; }
-          else { r = 0.1; g = 0.1; b = 0.1; }
-        }
+        const { r, g, b, alpha } = parseColorToRgb(ann.color, ann.type === 'highlight');
 
         if (ann.points.length < 2) continue;
 
@@ -788,19 +1208,28 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
             </button>
           )}
 
-                    <button 
+          {/* Search Button */}
+          <button 
             onClick={() => {
+              setIsSearchOpen(prev => !prev);
+              if (!isSearchOpen) {
+                setTimeout(() => searchInputRef.current?.focus(), 80);
+              }
+              // Also notify native plugin if running in Capacitor
               if (JetpackPdf) {
-                 JetpackPdf.setTextSearchActive({ active: true }).catch((e: any) => showToast("Native Search not supported on this device", "info"));
-              } else {
-                 showToast("Search plugin not loaded", "error");
+                JetpackPdf.setTextSearchActive({ active: !isSearchOpen }).catch(() => {});
               }
             }}
-            className="w-10 h-10 flex items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-800 sepia:hover:bg-sepia-100 rounded-xl transition-colors text-gray-600 dark:text-gray-300 active:scale-95"
-            title="Search"
+            className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all active:scale-95 ${
+              isSearchOpen 
+                ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400 font-bold' 
+                : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300'
+            }`}
+            title="Search in PDF (Ctrl+F)"
           >
             <Search className="w-5 h-5" />
           </button>
+
           {/* Download Button */}
           <button 
             onClick={handleDownload}
@@ -812,206 +1241,332 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         </div>
       </header>
 
-      {/* Floating Action / Tool Selector Bar (Optimized for Mobile Touch) */}
-      <div className="px-3 pt-2 pb-1.5 flex flex-wrap items-center justify-between gap-2 shrink-0 z-20">
-        {/* Tool Segmented Control */}
-        <div className="flex items-center bg-white dark:bg-gray-800 sepia:bg-sepia-50 p-1 rounded-2xl shadow-xs border border-gray-200 dark:border-gray-700 sepia:border-sepia-200">
-          <button 
-            onClick={() => setActiveTool('pan')} 
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-              activeTool === 'pan' 
-                ? 'bg-blue-600 text-white shadow-xs' 
-                : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
-            }`}
-          >
-            <Hand className="w-4 h-4" />
-            <span className="hidden sm:inline">Pan</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTool('highlight')} 
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-              activeTool === 'highlight' 
-                ? 'bg-amber-400 text-gray-900 shadow-xs font-bold' 
-                : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
-            }`}
-          >
-            <Highlighter className="w-4 h-4" />
-            <span className="hidden sm:inline">Highlight</span>
-          </button>
-
-                    <button 
-            onClick={() => setActiveTool('draw')} 
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-              activeTool === 'draw' 
-                ? 'bg-red-500 text-white shadow-xs' 
-                : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
-            }`}
-          >
-            <PenTool className="w-4 h-4" />
-            <span className="hidden sm:inline">Draw</span>
-          </button>
-          
-          <button 
-            onClick={() => setActiveTool('arrow')} 
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-              activeTool === 'arrow' 
-                ? 'bg-purple-500 text-white shadow-xs' 
-                : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
-            }`}
-          >
-            <MousePointer2 className="w-4 h-4" />
-            <span className="hidden sm:inline">Arrow</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTool('rectangle')} 
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-              activeTool === 'rectangle' 
-                ? 'bg-emerald-500 text-white shadow-xs' 
-                : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
-            }`}
-          >
-            <Square className="w-4 h-4" />
-            <span className="hidden sm:inline">Rect</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTool('circle')} 
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-              activeTool === 'circle' 
-                ? 'bg-pink-500 text-white shadow-xs' 
-                : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
-            }`}
-          >
-            <Circle className="w-4 h-4" />
-            <span className="hidden sm:inline">Circle</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTool('erase')} 
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-              activeTool === 'erase' 
-                ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900 shadow-xs' 
-                : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
-            }`}
-          >
-            <Eraser className="w-4 h-4" />
-            <span className="hidden sm:inline">Eraser</span>
-          </button>
-        </div>
-
-        {/* Color / Options Sub-panel Button */}
-        {(activeTool !== 'pan' && activeTool !== 'erase') && (
-          <div className="relative">
-            <button 
-              onClick={() => setShowColorPicker(!showColorPicker)}
-              className="flex items-center gap-1.5 bg-white dark:bg-gray-800 sepia:bg-sepia-50 px-3 py-2 rounded-2xl shadow-xs border border-gray-200 dark:border-gray-700 sepia:border-sepia-200 text-xs font-semibold"
-            >
-              <div 
-                className="w-3.5 h-3.5 rounded-full border border-black/10" 
-                style={{ backgroundColor: activeTool === 'highlight' ? highlightColor.replace('0.45', '1') : drawColor }}
-              />
-              <Palette className="w-3.5 h-3.5 text-gray-500" />
-            </button>
-
-            {showColorPicker && (
-              <>
-                <div className="fixed inset-0 z-30" onClick={() => setShowColorPicker(false)} />
-                <div className="absolute right-0 mt-2 p-3 bg-white dark:bg-gray-800 sepia:bg-sepia-50 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 z-40 w-48 space-y-3">
-                  <div>
-                    <div className="text-[11px] font-semibold text-gray-500 mb-1.5">Pick Color</div>
-                    <div className="flex gap-2">
-                      {(activeTool === 'highlight' ? HIGHLIGHT_COLORS : DRAW_COLORS).map(c => (
-                        <button 
-                          key={c}
-                          onClick={() => {
-                            if (activeTool === 'highlight') setHighlightColor(c);
-                            else setDrawColor(c);
-                            setShowColorPicker(false);
-                          }}
-                          className="w-7 h-7 rounded-full border border-black/10 flex items-center justify-center transition-transform active:scale-90"
-                          style={{ backgroundColor: c.replace('0.45', '1') }}
-                        >
-                          {((activeTool === 'highlight' && highlightColor === c) || (activeTool !== 'highlight' && drawColor === c)) && (
-                            <Check className="w-3.5 h-3.5 text-white stroke-[3] drop-shadow-xs" />
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {(activeTool !== 'highlight' && activeTool !== 'erase' && activeTool !== 'pan') && (
-                    <div>
-                      <div className="text-[11px] font-semibold text-gray-500 mb-1.5">Pen Thickness</div>
-                      <div className="flex items-center gap-2">
-                        {[2, 4, 6].map(w => (
-                          <button 
-                            key={w}
-                            onClick={() => { setStrokeWidth(w); setShowColorPicker(false); }}
-                            className={`flex-1 py-1 text-xs font-semibold rounded-lg border ${strokeWidth === w ? 'bg-blue-50 border-blue-500 text-blue-600' : 'border-gray-200 dark:border-gray-700'}`}
-                          >
-                            {w}px
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </>
+      {/* In-Document Search Toolbar */}
+      {isSearchOpen && (
+        <div className="bg-white/95 dark:bg-gray-900/95 sepia:bg-sepia-50/95 border-b border-gray-200 dark:border-gray-800 px-3 py-2 flex items-center gap-2 shadow-xs z-25 backdrop-blur animate-in slide-in-from-top-2 duration-150 shrink-0">
+          <div className="flex-1 flex items-center bg-gray-100 dark:bg-gray-800 rounded-xl px-2.5 py-1.5 gap-2 border border-gray-200 dark:border-gray-700 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500 transition-all">
+            <Search className="w-4 h-4 text-gray-400 shrink-0" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              placeholder="Find in document..."
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                performSearch(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  if (e.shiftKey) handlePrevMatch();
+                  else handleNextMatch();
+                }
+              }}
+              className="w-full bg-transparent text-xs text-gray-900 dark:text-gray-100 outline-none placeholder-gray-400"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => {
+                  setSearchQuery('');
+                  setSearchResults([]);
+                  setActiveMatchIndex(-1);
+                }}
+                className="text-gray-400 hover:text-gray-600 p-0.5 rounded-full"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
-        )}
 
-        {/* Clear Page Annotations */}
-        {annotations.some(a => a.page === pageNum) && (
-          <button 
-            onClick={() => {
-              if (window.confirm("Clear all annotations on this page?")) {
-                setAnnotations(prev => prev.filter(a => a.page !== pageNum));
-                setHasUnsavedChanges(true);
-              }
-            }}
-            className="flex items-center gap-1 text-[11px] font-semibold text-red-500 bg-red-50 dark:bg-red-950/40 px-2.5 py-2 rounded-2xl shrink-0"
-          >
-            <RotateCcw className="w-3.5 h-3.5" /> Clear Page
-          </button>
-        )}
+          <div className="flex items-center gap-1 shrink-0 text-xs text-gray-500 font-medium">
+            {isSearching ? (
+              <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+            ) : searchQuery ? (
+              <span className="text-[11px] px-1 font-semibold text-gray-600 dark:text-gray-300">
+                {searchResults.length > 0 ? `${activeMatchIndex + 1} of ${searchResults.length}` : '0 results'}
+              </span>
+            ) : null}
+
+            <button
+              onClick={handlePrevMatch}
+              disabled={searchResults.length === 0}
+              className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg disabled:opacity-30 active:scale-95 text-gray-700 dark:text-gray-300"
+              title="Previous match (Shift+Enter)"
+            >
+              <ChevronUp className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleNextMatch}
+              disabled={searchResults.length === 0}
+              className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg disabled:opacity-30 active:scale-95 text-gray-700 dark:text-gray-300"
+              title="Next match (Enter)"
+            >
+              <ChevronDown className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => {
+                setIsSearchOpen(false);
+                setSearchQuery('');
+                setSearchResults([]);
+                setActiveMatchIndex(-1);
+              }}
+              className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              title="Close search"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Action / Tool Selector Bar (Optimized for Mobile Touch) */}
+      <div className="px-3 pt-2 pb-1.5 flex items-center justify-between gap-2 shrink-0 z-20 relative">
+        {/* Tool Segmented Control with Horizontal Scroll for Small Screens */}
+        <div className="flex-1 overflow-x-auto no-scrollbar py-0.5">
+          <div className="inline-flex items-center bg-white dark:bg-gray-800 sepia:bg-sepia-50 p-1 rounded-2xl shadow-xs border border-gray-200 dark:border-gray-700 sepia:border-sepia-200 gap-0.5">
+            <button 
+              onClick={() => setActiveTool('pan')} 
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+                activeTool === 'pan' 
+                  ? 'bg-blue-600 text-white shadow-xs' 
+                  : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              <Hand className="w-4 h-4" />
+              <span className="hidden sm:inline">Pan</span>
+            </button>
+
+            <button 
+              onClick={() => setActiveTool('highlight')} 
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+                activeTool === 'highlight' 
+                  ? 'bg-amber-400 text-gray-900 shadow-xs font-bold' 
+                  : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              <Highlighter className="w-4 h-4" />
+              <span className="hidden sm:inline">Highlight</span>
+            </button>
+
+            <button 
+              onClick={() => setActiveTool('draw')} 
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+                activeTool === 'draw' 
+                  ? 'bg-red-500 text-white shadow-xs' 
+                  : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              <PenTool className="w-4 h-4" />
+              <span className="hidden sm:inline">Draw</span>
+            </button>
+            
+            <button 
+              onClick={() => setActiveTool('arrow')} 
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+                activeTool === 'arrow' 
+                  ? 'bg-purple-500 text-white shadow-xs' 
+                  : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              <MousePointer2 className="w-4 h-4" />
+              <span className="hidden sm:inline">Arrow</span>
+            </button>
+
+            <button 
+              onClick={() => setActiveTool('rectangle')} 
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+                activeTool === 'rectangle' 
+                  ? 'bg-emerald-500 text-white shadow-xs' 
+                  : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              <Square className="w-4 h-4" />
+              <span className="hidden sm:inline">Rect</span>
+            </button>
+
+            <button 
+              onClick={() => setActiveTool('circle')} 
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+                activeTool === 'circle' 
+                  ? 'bg-pink-500 text-white shadow-xs' 
+                  : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              <Circle className="w-4 h-4" />
+              <span className="hidden sm:inline">Circle</span>
+            </button>
+
+            <button 
+              onClick={() => setActiveTool('erase')} 
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+                activeTool === 'erase' 
+                  ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900 shadow-xs' 
+                  : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              <Eraser className="w-4 h-4" />
+              <span className="hidden sm:inline">Eraser</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Right side controls: Color / Options Picker & Clear Page */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {(activeTool !== 'pan' && activeTool !== 'erase') && (
+            <div className="relative">
+              <button 
+                onClick={() => setShowColorPicker(!showColorPicker)}
+                className="flex items-center gap-1.5 bg-white dark:bg-gray-800 sepia:bg-sepia-50 px-2.5 py-2 rounded-2xl shadow-xs border border-gray-200 dark:border-gray-700 sepia:border-sepia-200 text-xs font-semibold active:scale-95 transition-all"
+                title="Choose Color & Stroke Width"
+              >
+                <div 
+                  className="w-4 h-4 rounded-full border border-black/20 shadow-2xs shrink-0" 
+                  style={{ backgroundColor: activeTool === 'highlight' ? highlightColor.replace('0.45', '1') : drawColor }}
+                />
+                <Palette className="w-3.5 h-3.5 text-gray-500" />
+              </button>
+
+              {showColorPicker && (
+                <>
+                  <div className="fixed inset-0 z-40 bg-black/10" onClick={() => setShowColorPicker(false)} />
+                  <div 
+                    className="absolute right-0 top-full mt-2 p-3.5 bg-white dark:bg-gray-800 sepia:bg-sepia-50 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 z-50 w-64 max-w-[calc(100vw-24px)] space-y-3.5 animate-in fade-in zoom-in-95 duration-100"
+                    style={{ right: 0 }}
+                  >
+                    <div>
+                      <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">
+                        {activeTool === 'highlight' ? 'Highlighter Colors' : 'Ink Colors'}
+                      </div>
+                      <div className="grid grid-cols-6 gap-2">
+                        {(activeTool === 'highlight' ? HIGHLIGHT_COLORS : DRAW_COLORS).map(c => {
+                          const isSelected = (activeTool === 'highlight' && highlightColor === c) || (activeTool !== 'highlight' && drawColor === c);
+                          return (
+                            <button 
+                              key={c}
+                              onClick={() => {
+                                if (activeTool === 'highlight') setHighlightColor(c);
+                                else setDrawColor(c);
+                                setShowColorPicker(false);
+                              }}
+                              className={`w-7 h-7 rounded-full border flex items-center justify-center transition-transform active:scale-90 ${
+                                isSelected ? 'ring-2 ring-blue-500 ring-offset-1 scale-110' : 'border-black/15 hover:scale-105'
+                              }`}
+                              style={{ backgroundColor: c.replace('0.45', '1') }}
+                            >
+                              {isSelected && (
+                                <Check className="w-3.5 h-3.5 text-white stroke-[3] drop-shadow-xs" />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {(activeTool !== 'highlight' && activeTool !== 'erase' && activeTool !== 'pan') && (
+                      <div className="pt-1 border-t border-gray-100 dark:border-gray-700">
+                        <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">Stroke Thickness</div>
+                        <div className="flex items-center gap-1.5">
+                          {[2, 3, 5, 8].map(w => (
+                            <button 
+                              key={w}
+                              onClick={() => { setStrokeWidth(w); setShowColorPicker(false); }}
+                              className={`flex-1 py-1.5 text-xs font-semibold rounded-xl border transition-all ${
+                                strokeWidth === w 
+                                  ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-500 text-blue-600 dark:text-blue-400 font-bold' 
+                                  : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50'
+                              }`}
+                            >
+                              {w}px
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Clear Page Annotations */}
+          {annotations.some(a => a.page === pageNum) && (
+            <button 
+              onClick={() => {
+                if (window.confirm("Clear all annotations on this page?")) {
+                  setAnnotations(prev => prev.filter(a => a.page !== pageNum));
+                  setHasUnsavedChanges(true);
+                }
+              }}
+              className="flex items-center gap-1 text-[11px] font-semibold text-red-500 bg-red-50 dark:bg-red-950/40 px-2.5 py-2 rounded-2xl shrink-0 active:scale-95"
+              title="Clear annotations on page"
+            >
+              <RotateCcw className="w-3.5 h-3.5" /> 
+              <span className="hidden sm:inline">Clear</span>
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Main PDF Scrollable Stage */}
+      {/* Main PDF Stage with Hardware-Accelerated Transforms (No Scrollbar/Margin Jiggle) */}
       <div 
         ref={containerRef}
-        className="flex-1 overflow-auto relative touch-pan-x touch-pan-y"
+        className="flex-1 overflow-hidden relative touch-none select-none bg-gray-100 dark:bg-gray-950 sepia:bg-sepia-100"
+        onWheel={handleWheel}
+        onPointerDown={handleContainerPointerDown}
+        onPointerMove={handleContainerPointerMove}
+        onPointerUp={handleContainerPointerUp}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
-        <div className="p-4" style={{ 
-          width: `${(pageSize.width * fitScale * userZoom) + 32}px`,
-          height: `${(pageSize.height * fitScale * userZoom) + 32}px`,
-          margin: '0 auto',
-          position: 'relative'
-        }}>
+        <div 
+          ref={stageRef}
+          className="absolute origin-top-left will-change-transform"
+          style={{
+            transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${userZoom})`,
+            width: pageSize.width * fitScale,
+            height: pageSize.height * fitScale,
+          }}
+        >
+          {/* Inner PDF Canvas Container */}
           <div 
-            className="relative shadow-xl rounded-md overflow-hidden bg-white origin-top-left"
+            className="relative shadow-2xl rounded-xs overflow-hidden bg-white"
             style={{
-              width: pageSize.width * fitScale * renderZoom,
-              height: pageSize.height * fitScale * renderZoom,
-              transform: `scale(${userZoom / renderZoom})`,
-              transition: 'none'
+              width: pageSize.width * fitScale,
+              height: pageSize.height * fitScale,
             }}
           >
             {/* Background PDF Canvas */}
             <canvas ref={canvasRef} className="block bg-white w-full h-full" />
+
+            {/* In-Document Search Highlight Rectangles */}
+            {searchResults.map((match, idx) => {
+              if (match.pageNum !== pageNum) return null;
+              const isActive = idx === activeMatchIndex;
+              return match.rects.map((r, rIdx) => (
+                <div
+                  key={`${match.id}-${rIdx}`}
+                  className={`absolute pointer-events-none rounded-xs transition-all ${
+                    isActive 
+                      ? 'bg-orange-500/55 border-2 border-orange-600 ring-2 ring-orange-300 z-10 animate-pulse' 
+                      : 'bg-yellow-400/40 border border-yellow-500/60 z-5'
+                  }`}
+                  style={{
+                    left: `${r.x * 100}%`,
+                    top: `${r.y * 100}%`,
+                    width: `${r.width * 100}%`,
+                    height: `${r.height * 100}%`,
+                  }}
+                />
+              ));
+            })}
 
             {/* Foreground Annotation Canvas */}
             <canvas 
               ref={drawCanvasRef} 
               className={`absolute inset-0 w-full h-full ${
                 activeTool === 'pan' 
-                  ? 'cursor-grab touch-pan-x touch-pan-y pointer-events-none' 
-                  : 'cursor-crosshair touch-none'
+                  ? 'cursor-grab active:cursor-grabbing pointer-events-none' 
+                  : 'cursor-crosshair'
               }`}
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
@@ -1022,7 +1577,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
             {/* Loading / Rendering Indicator */}
             {isPageChanging && (
-              <div className="absolute inset-0 bg-white/40 dark:bg-gray-900/40 backdrop-blur-2xs flex items-center justify-center pointer-events-none">
+              <div className="absolute inset-0 bg-white/40 dark:bg-gray-900/40 backdrop-blur-2xs flex items-center justify-center pointer-events-none z-20">
                 <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
               </div>
             )}
@@ -1049,7 +1604,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
               setJumpPageInput(String(pageNum));
               setIsJumpModalOpen(true);
             }}
-            className="h-10 px-2.5 bg-gray-50 dark:bg-gray-800/60 rounded-xl text-xs font-semibold border border-gray-200 dark:border-gray-700 min-w-[72px] text-center active:scale-95"
+            className="h-10 px-2.5 bg-gray-50 dark:bg-gray-800/60 rounded-xl text-xs font-semibold border border-gray-200 dark:border-gray-700 min-w-[72px] text-center active:scale-95 text-gray-800 dark:text-gray-200"
           >
             {pageNum} / {totalPages}
           </button>
@@ -1065,11 +1620,11 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
           </button>
         </div>
 
-        {/* Zoom Controls */}
+        {/* Zoom Controls with Hardware Accelerated Zoom Engine */}
         <div className="flex items-center gap-1">
           <button 
-            onClick={() => setUserZoom(z => Math.max(0.6, z - 0.2))}
-            className="w-10 h-10 flex items-center justify-center bg-gray-100 dark:bg-gray-800 sepia:bg-sepia-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl active:scale-95 text-gray-700 dark:text-gray-300"
+            onClick={handleZoomOut}
+            className="w-10 h-10 flex items-center justify-center bg-gray-100 dark:bg-gray-800 sepia:bg-sepia-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl active:scale-95 text-gray-700 dark:text-gray-300 transition-colors"
             title="Zoom Out"
             aria-label="Zoom Out"
           >
@@ -1077,16 +1632,16 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
           </button>
 
           <button 
-            onClick={() => setUserZoom(1.0)}
-            className="h-10 px-2 text-xs font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl"
-            title="Reset Zoom to Fit Width"
+            onClick={handleResetZoom}
+            className="h-10 px-2 text-xs font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl active:scale-95 transition-colors"
+            title="Reset Zoom to 100%"
           >
             {Math.round(userZoom * 100)}%
           </button>
 
           <button 
-            onClick={() => setUserZoom(z => Math.min(3.5, z + 0.2))}
-            className="w-10 h-10 flex items-center justify-center bg-gray-100 dark:bg-gray-800 sepia:bg-sepia-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl active:scale-95 text-gray-700 dark:text-gray-300"
+            onClick={handleZoomIn}
+            className="w-10 h-10 flex items-center justify-center bg-gray-100 dark:bg-gray-800 sepia:bg-sepia-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl active:scale-95 text-gray-700 dark:text-gray-300 transition-colors"
             title="Zoom In"
             aria-label="Zoom In"
           >
