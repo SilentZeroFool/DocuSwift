@@ -1,0 +1,1 @@
+sed -i 's/<canvas\n              ref={drawCanvasRef}/<canvas\n              ref={staticCanvasRef}\n              className="absolute inset-0 w-full h-full pointer-events-none"\n            \/>\n            <canvas\n              ref={drawCanvasRef}/g' src/components/PdfViewer.tsx

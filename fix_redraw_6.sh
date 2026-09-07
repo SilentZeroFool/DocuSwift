@@ -1,0 +1,1 @@
+sed -i 's/redrawAnnotations(viewport.width, viewport.height);/redrawStaticAnnotations(viewport.width, viewport.height);\n        redrawActiveStroke(viewport.width, viewport.height);/g' src/components/PdfViewer.tsx

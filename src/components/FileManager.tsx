@@ -408,14 +408,14 @@ export function FileManager({ onOpenFile, onCompressPDF,  }: FileManagerProps) {
           className="w-full flex items-center justify-center gap-2.5 bg-blue-600 active:bg-blue-700 hover:bg-blue-650 text-white py-3.5 px-4 rounded-2xl font-semibold text-sm shadow-md shadow-blue-500/20 active:scale-[0.99] transition-all disabled:opacity-50"
         >
           <Upload className="w-5 h-5" /> 
-          <span>{isImporting ? 'Importing PDF...' : 'Import PDF Document'}</span>
+          <span>{isImporting ? 'Importing File...' : 'Import PDF or Text File'}</span>
         </button>
 
         <input 
           type="file" 
           ref={fileInputRef} 
           onChange={handleFileUpload} 
-          accept="application/pdf"
+          accept=".pdf,.txt,.json,.xml,.ini,.csv,.md,.log,.yaml,.yml,application/pdf,text/*,application/json,application/xml"
           multiple
           className="hidden" 
         />
@@ -590,22 +590,24 @@ export function FileManager({ onOpenFile, onCompressPDF,  }: FileManagerProps) {
 
               
 
-              <button 
-                onClick={() => {
-                  const doc = activeMenuDoc;
-                  setActiveMenuDoc(null);
-                  setCompressModalDoc(doc);
-                }}
-                className="w-full flex items-center gap-3 px-3 py-3.5 rounded-2xl text-left font-medium text-sm hover:bg-gray-50 dark:hover:bg-gray-800 sepia:hover:bg-sepia-100 active:bg-gray-100 dark:active:bg-gray-700 transition-colors text-gray-900 dark:text-gray-100"
-              >
-                <div className="p-2 rounded-xl bg-amber-50 text-amber-600 dark:bg-amber-900/30">
-                  <Minimize2 className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="font-semibold">Compress PDF</div>
-                  <div className="text-xs text-gray-500">Reduce file size for WhatsApp / Email sharing</div>
-                </div>
-              </button>
+              {activeMenuDoc.name.toLowerCase().endsWith('.pdf') && (
+                <button 
+                  onClick={() => {
+                    const doc = activeMenuDoc;
+                    setActiveMenuDoc(null);
+                    setCompressModalDoc(doc);
+                  }}
+                  className="w-full flex items-center gap-3 px-3 py-3.5 rounded-2xl text-left font-medium text-sm hover:bg-gray-50 dark:hover:bg-gray-800 sepia:hover:bg-sepia-100 active:bg-gray-100 dark:active:bg-gray-700 transition-colors text-gray-900 dark:text-gray-100"
+                >
+                  <div className="p-2 rounded-xl bg-amber-50 text-amber-600 dark:bg-amber-900/30">
+                    <Minimize2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="font-semibold">Compress PDF</div>
+                    <div className="text-xs text-gray-500">Reduce file size for WhatsApp / Email sharing</div>
+                  </div>
+                </button>
+              )}
 
               <button 
                 onClick={() => {
