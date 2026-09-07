@@ -1636,6 +1636,10 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
             {/* Foreground Annotation Canvas */}
             <canvas 
+              ref={staticCanvasRef} 
+              className="absolute inset-0 w-full h-full pointer-events-none" 
+            />
+            <canvas 
               ref={drawCanvasRef} 
               className={`absolute inset-0 w-full h-full ${
                 activeTool === 'pan' 
