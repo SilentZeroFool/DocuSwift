@@ -111,7 +111,21 @@ export function FileManager({ onOpenFile, onCompressPDF,  }: FileManagerProps) {
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) continue;
+        const fileName = file.name.toLowerCase();
+        const isValidExt = fileName.endsWith('.pdf') || 
+                           fileName.endsWith('.txt') || 
+                           fileName.endsWith('.json') || 
+                           fileName.endsWith('.xml') || 
+                           fileName.endsWith('.ini') || 
+                           fileName.endsWith('.csv') || 
+                           fileName.endsWith('.md') ||
+                           fileName.endsWith('.log') ||
+                           fileName.endsWith('.yaml') ||
+                           fileName.endsWith('.yml');
+        
+        if (!isValidExt) {
+          continue;
+        }
         
         const buffer = await file.arrayBuffer();
         const newDoc: LocalDocument = {
@@ -213,7 +227,7 @@ export function FileManager({ onOpenFile, onCompressPDF,  }: FileManagerProps) {
 
       {/* Settings Modal */}
       {isSettingsModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
           <div className="bg-white dark:bg-gray-800 sepia:bg-sepia-50 w-full max-w-sm rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
               <h2 className="text-lg font-bold">Advanced Settings</h2>
@@ -308,7 +322,7 @@ export function FileManager({ onOpenFile, onCompressPDF,  }: FileManagerProps) {
       )}
 
       {/* Top Safe Area & Header */}
-      <header className="pt-[max(1rem,env(safe-area-inset-top))] px-4 pb-3 border-b border-gray-200 dark:border-gray-800 sepia:border-sepia-100 flex items-center justify-between gap-3 shrink-0 bg-white/95 dark:bg-gray-900/95 sepia:bg-sepia-50/95 backdrop-blur z-20">
+      <header className="pt-[max(1rem,env(safe-area-inset-top))] px-4 pb-3 border-b border-gray-200 dark:border-gray-800 sepia:border-sepia-100 flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-gray-900 sepia:bg-sepia-50 z-20">
         <div className="flex items-center gap-2">
           <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm">
             <FileText className="w-5 h-5" />
@@ -525,7 +539,7 @@ export function FileManager({ onOpenFile, onCompressPDF,  }: FileManagerProps) {
 
       {/* Android Mobile Bottom Sheet for Document Options */}
       {activeMenuDoc && (
-        <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/50 backdrop-blur-xs animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/50 animate-in fade-in duration-150">
           <div 
             className="fixed inset-0" 
             onClick={() => setActiveMenuDoc(null)} 
@@ -643,7 +657,7 @@ export function FileManager({ onOpenFile, onCompressPDF,  }: FileManagerProps) {
 
       {/* Tag Management Modal */}
       {tagModalDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
           <div className="bg-white dark:bg-gray-900 sepia:bg-sepia-50 rounded-3xl p-5 shadow-2xl border border-gray-100 dark:border-gray-800 sepia:border-sepia-200 w-full max-w-sm">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-bold text-lg">Manage Tags</h3>
@@ -717,7 +731,7 @@ export function FileManager({ onOpenFile, onCompressPDF,  }: FileManagerProps) {
       )}
       {/* Compression Modal */}
       {compressModalDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
           <div className="bg-white dark:bg-gray-900 sepia:bg-sepia-50 rounded-3xl p-6 shadow-2xl border border-gray-100 dark:border-gray-800 sepia:border-sepia-200 w-full max-w-sm">
             <div className="flex items-center justify-between mb-2">
               <h3 className="font-bold text-lg">Compress PDF</h3>

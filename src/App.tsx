@@ -6,6 +6,7 @@
 import React, { useEffect, useState } from 'react';
 import { FileManager } from './components/FileManager';
 import { PdfViewer } from './components/PdfViewer';
+import { TextViewer } from './components/TextViewer';
 import { ThemeProvider } from './components/ThemeContext';
 import { SettingsProvider } from './components/SettingsContext';
 import { ToastProvider, useToast } from './components/Toast';
@@ -13,14 +14,19 @@ import { LocalDocument } from './types';
 import { PDFDocument } from 'pdf-lib';
 import { saveLocalDocument } from './lib/idb';
 import { App as CapApp } from '@capacitor/app';
-
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Capacitor, registerPlugin } from '@capacitor/core';
+
 const JetpackPdf = registerPlugin('JetpackPdf');
+
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
-
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
+
+const isTextFile = (name: string) => {
+  const n = name.toLowerCase();
+  return n.endsWith('.txt') || n.endsWith('.json') || n.endsWith('.xml') || n.endsWith('.ini') || n.endsWith('.csv') || n.endsWith('.md') || n.endsWith('.log') || n.endsWith('.yaml') || n.endsWith('.yml');
+};
 
 function AppContent() {
   const [activeDoc, setActiveDoc] = useState<LocalDocument | null>(null);
@@ -35,7 +41,8 @@ function AppContent() {
     const initIntentHandler = async () => {
       try {
         await CapApp.addListener('appUrlOpen', async (data) => {
-          if (data.url.toLowerCase().endsWith('.pdf') || data.url.startsWith('file://') || data.url.startsWith('content://')) {
+          const lowerUrl = data.url.toLowerCase();
+          if (lowerUrl.endsWith('.pdf') || isTextFile(lowerUrl) || data.url.startsWith('file://') || data.url.startsWith('content://')) {
             try {
               let urlToFetch = data.url;
               if (data.url.startsWith('file://') || data.url.startsWith('content://')) {
@@ -47,7 +54,7 @@ function AppContent() {
               
               const newDoc: LocalDocument = {
                 id: crypto.randomUUID(),
-                name: data.url.split('/').pop() || 'Imported_Document.pdf',
+                name: data.url.split('/').pop() || 'Imported_Document',
                 size: bytes.length,
                 data: bytes.buffer.slice(0) as ArrayBuffer,
                 createdAt: Date.now(),
@@ -58,9 +65,9 @@ function AppContent() {
               await saveLocalDocument(newDoc);
               setActiveDoc(newDoc);
               setRefreshKey(k => k + 1);
-              showToast("PDF imported successfully", "success");
+              showToast("File imported successfully", "success");
             } catch (err) {
-              console.error("Failed to load PDF from intent", err);
+              console.error("Failed to load file from intent", err);
               try {
                   const fileData = await Filesystem.readFile({ path: data.url });
                   const binaryString = window.atob(fileData.data as string);
@@ -71,7 +78,7 @@ function AppContent() {
                   }
                   const newDoc: LocalDocument = {
                     id: crypto.randomUUID(),
-                    name: data.url.split('/').pop() || 'Imported_Document.pdf',
+                    name: data.url.split('/').pop() || 'Imported_Document',
                     size: bytes.length,
                     data: bytes.buffer.slice(0) as ArrayBuffer,
                     createdAt: Date.now(),
@@ -82,9 +89,9 @@ function AppContent() {
                   await saveLocalDocument(newDoc);
                   setActiveDoc(newDoc);
                   setRefreshKey(k => k + 1);
-                  showToast("PDF imported successfully", "success");
+                  showToast("File imported successfully", "success");
               } catch(e) {
-                 showToast("Failed to load external PDF: " + String(e), "error");
+                 showToast("Failed to load external file: " + String(e), "error");
               }
             }
           }
@@ -166,9 +173,13 @@ function AppContent() {
 
   return (
     <>
-      {!isMounted ? <div className="h-screen w-full bg-white dark:bg-gray-900 sepia:bg-sepia-50" /> : <div className="h-screen w-full font-sans antialiased animate-in fade-in duration-500 bg-white dark:bg-gray-900 sepia:bg-sepia-50 text-gray-900 dark:text-gray-100 sepia:text-sepia-900 flex flex-col">
+      {!isMounted ? <div className="h-screen w-full bg-white dark:bg-gray-900 sepia:bg-sepia-50" /> : <div className="h-screen w-full font-sans antialiased bg-white dark:bg-gray-900 sepia:bg-sepia-50 text-gray-900 dark:text-gray-100 sepia:text-sepia-900 flex flex-col will-change-transform">
         {activeDoc ? (
-          <PdfViewer doc={activeDoc} onClose={() => { setActiveDoc(null); setRefreshKey(prev => prev + 1); }} />
+          isTextFile(activeDoc.name) ? (
+            <TextViewer doc={activeDoc} onClose={() => { setActiveDoc(null); setRefreshKey(prev => prev + 1); }} />
+          ) : (
+            <PdfViewer doc={activeDoc} onClose={() => { setActiveDoc(null); setRefreshKey(prev => prev + 1); }} />
+          )
         ) : (
           <FileManager 
             key={refreshKey}

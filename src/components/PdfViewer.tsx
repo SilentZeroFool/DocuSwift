@@ -1167,7 +1167,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
   return (
     <div className="flex flex-col h-full bg-gray-150 dark:bg-gray-950 sepia:bg-sepia-100 overflow-hidden select-none">
       {/* Top App Bar with Safe Area Top */}
-      <header className="pt-[max(0.75rem,env(safe-area-inset-top))] px-3 pb-2.5 bg-white/95 dark:bg-gray-900/95 sepia:bg-sepia-50/95 border-b border-gray-200 dark:border-gray-800 sepia:border-sepia-200 shadow-xs flex items-center justify-between gap-2 z-30 backdrop-blur shrink-0">
+      <header className="pt-[max(0.75rem,env(safe-area-inset-top))] px-3 pb-2.5 bg-white dark:bg-gray-900 sepia:bg-sepia-50 border-b border-gray-200 dark:border-gray-800 sepia:border-sepia-200 shadow-xs flex items-center justify-between gap-2 z-30 shrink-0">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <button 
             onClick={onClose} 
@@ -1243,7 +1243,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
       {/* In-Document Search Toolbar */}
       {isSearchOpen && (
-        <div className="bg-white/95 dark:bg-gray-900/95 sepia:bg-sepia-50/95 border-b border-gray-200 dark:border-gray-800 px-3 py-2 flex items-center gap-2 shadow-xs z-25 backdrop-blur animate-in slide-in-from-top-2 duration-150 shrink-0">
+        <div className="bg-white dark:bg-gray-900 sepia:bg-sepia-50 border-b border-gray-200 dark:border-gray-800 px-3 py-2 flex items-center gap-2 shadow-xs z-25 animate-in slide-in-from-top-2 duration-150 shrink-0">
           <div className="flex-1 flex items-center bg-gray-100 dark:bg-gray-800 rounded-xl px-2.5 py-1.5 gap-2 border border-gray-200 dark:border-gray-700 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500 transition-all">
             <Search className="w-4 h-4 text-gray-400 shrink-0" />
             <input
@@ -1577,7 +1577,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
             {/* Loading / Rendering Indicator */}
             {isPageChanging && (
-              <div className="absolute inset-0 bg-white/40 dark:bg-gray-900/40 backdrop-blur-2xs flex items-center justify-center pointer-events-none z-20">
+              <div className="absolute inset-0 bg-white/60 dark:bg-gray-900/60 flex items-center justify-center pointer-events-none z-20">
                 <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
               </div>
             )}
@@ -1652,7 +1652,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
 
       {/* Jump Page Dialog Modal */}
       {isJumpModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
           <div className="bg-white dark:bg-gray-900 sepia:bg-sepia-50 rounded-3xl p-5 shadow-2xl border border-gray-100 dark:border-gray-800 sepia:border-sepia-200 w-full max-w-xs animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-bold text-base">Jump to Page</h3>
