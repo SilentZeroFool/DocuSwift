@@ -387,7 +387,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         ctx.lineWidth = Math.max(type === 'highlight' ? 16 : 2, sw * (width / 595));
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.globalCompositeOperation = type === 'highlight' ? 'multiply' : 'source-over';
+        
         ctx.stroke();
       } else if (type === 'arrow') {
         const headlen = 15 * (width / 595);
@@ -457,7 +457,7 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
         ctx.lineWidth = Math.max(type === 'highlight' ? 16 : 2, sw * (width / 595));
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.globalCompositeOperation = type === 'highlight' ? 'multiply' : 'source-over';
+        
         ctx.stroke();
       } else if (type === 'arrow') {
         const headlen = 15 * (width / 595);
@@ -548,14 +548,21 @@ export function PdfViewer({ doc, onClose }: PdfViewerProps) {
     } catch {}
   };
 
+
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isDrawingRef.current) return;
     const pt = getNormalizedPoint(e);
     if (!pt) return;
-    currentPathRef.current.push(pt);
+    
+    const path = currentPathRef.current;
+    if (path.length > 0) {
+      const last = path[path.length - 1];
+      const dist = Math.hypot(last.x - pt.x, last.y - pt.y);
+      if (dist < 0.002) return; // skip if moved less than ~0.2% of page dimensions
+    }
+    path.push(pt);
     redrawActiveStroke();
   };
-
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isDrawingRef.current) return;
     isDrawingRef.current = false;
